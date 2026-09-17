@@ -1,33 +1,85 @@
-import { useAuth } from "@/_core/hooks/useAuth";
+import { useMemo, useState } from "react";
+import { ArrowRight, BrainCircuit, Check, Clock3, Globe2, MessageSquare, RotateCcw, Sparkles, Target, Timer, TrendingUp, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Loader2 } from "lucide-react";
-import { Streamdown } from 'streamdown';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import { trpc } from "@/lib/trpc";
 
-/**
- * All content in this page are only for example, replace with your own feature implementation
- * When building pages, remember your instructions in Frontend Workflow, Frontend Best Practices, Design Guide and Common Pitfalls
- */
+type Goal = "tech-interview" | "behavioral" | "system-design";
+type Timeline = "3-days" | "1-week" | "2-weeks" | "1-month" | "3-months";
+
+const goals: Array<{ id: Goal; title: string; description: string; icon: typeof BrainCircuit; tag?: string }> = [
+  { id: "tech-interview", title: "Technical interview", description: "Algorithms, coding, and engineering judgment", icon: BrainCircuit, tag: "Popular" },
+  { id: "behavioral", title: "Behavioral interview", description: "Stories, leadership, and communication", icon: MessageSquare },
+  { id: "system-design", title: "System design", description: "Architecture, scale, and trade-offs", icon: Target, tag: "Advanced" },
+];
+
+const timelines: Array<{ id: Timeline; title: string; detail: string; color: string }> = [
+  { id: "3-days", title: "3 days", detail: "Emergency sprint", color: "bg-rose-500" },
+  { id: "1-week", title: "1 week", detail: "Intensive", color: "bg-amber-500" },
+  { id: "2-weeks", title: "2 weeks", detail: "Focused", color: "bg-yellow-400" },
+  { id: "1-month", title: "1 month", detail: "Comprehensive", color: "bg-emerald-500" },
+  { id: "3-months", title: "3+ months", detail: "Mastery", color: "bg-sky-500" },
+];
+
+const features = [
+  { icon: Timer, title: "Dynamic calibration", text: "Your plan changes with your deadline, performance, and available energy." },
+  { icon: Globe2, title: "Global context", text: "Practice with respectful guidance for different cultures, roles, and jurisdictions." },
+  { icon: TrendingUp, title: "Feedback that compounds", text: "Every answer becomes a sharper next question and a more useful next step." },
+];
+
 export default function Home() {
-  // The useAuth hook provides authentication state.
-  // To implement login/logout, call logout(), or start login from an event
-  // handler: onClick={() => startLogin()} (imported from "@/const"). Never call
-  // startLogin() during render (no href={startLogin()}) — it mints a one-time
-  // nonce cookie and must run only at the moment of navigation.
-  let { user, loading, error, isAuthenticated, logout } = useAuth();
+  const [goal, setGoal] = useState<Goal | null>(null);
+  const [timeline, setTimeline] = useState<Timeline | null>(null);
+  const [session, setSession] = useState<{ sessionId: string; sessions: number; focus: string; difficulty: string; mode: string; interviewType: Goal; timeline: Timeline } | null>(null);
+  const [question, setQuestion] = useState<JsonQuestion | null>(null);
+  const [answer, setAnswer] = useState("");
+  const [feedback, setFeedback] = useState<JsonFeedback | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
 
-  // If theme is switchable in App.tsx, we can implement theme toggling like this:
-  // const { theme, toggleTheme } = useTheme();
+  const start = trpc.coach.start.useMutation({ onSuccess: (data) => { setSession(data); setStartedAt(Date.now()); } });
+  const generate = trpc.coach.question.useMutation({ onSuccess: (data) => { setQuestion(data); setFeedback(null); setAnswer(""); setStartedAt(Date.now()); } });
+  const evaluate = trpc.coach.evaluate.useMutation({ onSuccess: (data) => setFeedback(data) });
+
+  const selectedGoal = useMemo(() => goals.find((item) => item.id === goal), [goal]);
+  const selectedTimeline = useMemo(() => timelines.find((item) => item.id === timeline), [timeline]);
+
+  function begin() {
+    if (goal && timeline) start.mutate({ interviewType: goal, timeline });
+  }
+
+  function reset() {
+    setSession(null); setQuestion(null); setFeedback(null); setAnswer(""); setGoal(null); setTimeline(null);
+  }
+
+  if (session) {
+    const progress = feedback ? 33 : question ? 16 : 0;
+    return (
+      <main className="min-h-screen bg-[#f6f8fb] text-slate-900">
+        <nav className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
+          <button className="flex items-center gap-3" onClick={reset} aria-label="Back to home"><span className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-950 text-lime-300"><Sparkles size={19} /></span><span className="font-semibold tracking-tight">Global AI Coach</span></button>
+          <div className="flex items-center gap-3"><Badge variant="secondary">{session.mode}</Badge><Button variant="ghost" onClick={reset}><RotateCcw size={16} className="mr-2" /> New plan</Button></div>
+        </nav>
+        <section className="mx-auto max-w-7xl px-6 pb-16 pt-8">
+          <div className="mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-end"><div><p className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Your coaching room</p><h1 className="text-4xl font-semibold tracking-[-0.04em] md:text-6xl">Train with intent.</h1><p className="mt-3 max-w-2xl text-slate-600">{selectedGoal?.title} · {selectedTimeline?.title} · {session.focus}</p></div><div className="rounded-2xl bg-white px-5 py-4 shadow-sm ring-1 ring-slate-200"><p className="text-xs uppercase tracking-widest text-slate-500">Current mode</p><p className="mt-1 font-semibold">{session.difficulty} calibration</p></div></div>
+          <div className="grid gap-5 md:grid-cols-3"><Card><CardHeader><CardDescription>Readiness</CardDescription><CardTitle>0%</CardTitle></CardHeader><CardContent><Progress value={progress} /><p className="mt-3 text-sm text-slate-500">{feedback ? "First session reviewed" : "Start your first practice"}</p></CardContent></Card><Card><CardHeader><CardDescription>Plan</CardDescription><CardTitle>{session.sessions} sessions</CardTitle></CardHeader><CardContent><p className="text-sm text-slate-500">Calibrated for your {selectedTimeline?.title} timeline.</p></CardContent></Card><Card><CardHeader><CardDescription>Coach signal</CardDescription><CardTitle className="text-2xl">{feedback ? `${feedback.overallScore}/10` : "Ready"}</CardTitle></CardHeader><CardContent><p className="text-sm text-slate-500">{feedback ? "Feedback captured" : "Pick a focused drill below"}</p></CardContent></Card></div>
+          {!question && !feedback && <Card className="mt-6 overflow-hidden border-0 bg-slate-950 text-white"><CardContent className="grid gap-8 p-8 md:grid-cols-[1fr_auto] md:items-center md:p-12"><div><Badge className="mb-4 bg-lime-300 text-slate-950">Next best action</Badge><h2 className="max-w-xl text-3xl font-semibold tracking-tight">Turn your weakest signal into your next advantage.</h2><p className="mt-3 max-w-xl text-slate-300">The coach will generate a realistic prompt, then evaluate your answer against clarity, confidence, technical judgment, and time.</p></div><Button className="bg-lime-300 text-slate-950 hover:bg-lime-200" size="lg" onClick={() => generate.mutate({ interviewType: session.interviewType, difficulty: session.difficulty, focus: session.focus })} disabled={generate.isPending}>{generate.isPending ? "Generating…" : "Generate practice"}<ArrowRight size={17} className="ml-2" /></Button></CardContent></Card>}
+          {question && !feedback && <Card className="mt-6"><CardHeader><div className="flex items-center justify-between gap-4"><div><CardDescription>Practice prompt · {question.estimatedMinutes || 15} minutes</CardDescription><CardTitle className="mt-2 max-w-3xl text-2xl">{question.question || "Your personalized practice question"}</CardTitle></div><Badge variant="outline">{question.coachType === "ai" ? "OpenRouter AI" : "Resilient fallback"}</Badge></div></CardHeader><CardContent><div className="mb-5 grid gap-3 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600 md:grid-cols-3"><span><strong className="text-slate-900">Context:</strong> {question.context}</span><span><strong className="text-slate-900">Hint:</strong> {question.hints?.[0]}</span><span><strong className="text-slate-900">Criteria:</strong> {question.evaluationCriteria?.join(", ")}</span></div><textarea value={answer} onChange={(event) => setAnswer(event.target.value)} className="min-h-48 w-full resize-y rounded-2xl border border-slate-200 bg-white p-4 outline-none transition focus:border-slate-900 focus:ring-4 focus:ring-slate-900/10" placeholder="Write your answer as if you were in the real room…" /><div className="mt-4 flex items-center justify-between gap-4"><span className="flex items-center gap-2 text-sm text-slate-500"><Clock3 size={15} /> {startedAt ? Math.max(1, Math.round((Date.now() - startedAt) / 60000)) : 1} min elapsed</span><Button onClick={() => evaluate.mutate({ question: question.question || "Practice interview question", answer, interviewType: session.interviewType, timeTaken: Math.max(1, Math.round((Date.now() - (startedAt || Date.now())) / 60000)) })} disabled={!answer.trim() || evaluate.isPending}>{evaluate.isPending ? "Reviewing…" : "Get feedback"}<Sparkles size={16} className="ml-2" /></Button></div></CardContent></Card>}
+          {feedback && <Card className="mt-6"><CardHeader><div className="flex items-center justify-between"><div><CardDescription>Coach review</CardDescription><CardTitle className="mt-2 text-3xl">Good first rep. Now sharpen it.</CardTitle></div><div className="grid h-20 w-20 place-items-center rounded-full bg-lime-100 text-2xl font-semibold text-slate-950">{feedback.overallScore}</div></div></CardHeader><CardContent><div className="grid gap-4 md:grid-cols-3">{[["Communication", feedback.communicationScore], ["Confidence", feedback.confidenceScore], ["Time", feedback.timeManagementScore]].map(([label, value]) => <div key={label as string} className="rounded-2xl bg-slate-50 p-4"><p className="text-sm text-slate-500">{label}</p><p className="mt-2 text-2xl font-semibold">{value}/10</p></div>)}</div><div className="mt-6 grid gap-6 md:grid-cols-2"><div><h3 className="font-semibold">What worked</h3><ul className="mt-3 space-y-2 text-sm text-slate-600">{feedback.strengths?.map((item) => <li key={item} className="flex gap-2"><Check size={16} className="mt-0.5 text-emerald-600" />{item}</li>)}</ul></div><div><h3 className="font-semibold">Next improvement</h3><ul className="mt-3 space-y-2 text-sm text-slate-600">{feedback.improvements?.map((item) => <li key={item} className="flex gap-2"><Zap size={16} className="mt-0.5 text-amber-500" />{item}</li>)}</ul></div></div><div className="mt-6 rounded-2xl bg-slate-950 p-5 text-slate-200"><p className="text-sm leading-6">{feedback.detailedFeedback}</p></div><Button className="mt-6" onClick={() => { setQuestion(null); setFeedback(null); setAnswer(""); }}>Continue training<ArrowRight size={16} className="ml-2" /></Button></CardContent></Card>}
+        </section>
+      </main>
+    );
+  }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <main>
-        {/* Example: lucide-react for icons */}
-        <Loader2 className="animate-spin" />
-        Example Page
-        {/* Example: Streamdown for markdown rendering */}
-        <Streamdown>Any **markdown** content</Streamdown>
-        <Button variant="default">Example Button</Button>
-      </main>
-    </div>
+    <main className="min-h-screen overflow-hidden bg-[#f6f8fb] text-slate-900"><nav className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5"><div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-950 text-lime-300"><Sparkles size={19} /></span><span className="font-semibold tracking-tight">Global AI Coach</span></div><div className="hidden items-center gap-6 text-sm text-slate-500 md:flex"><span>Adaptive training</span><span>Global context</span><span>Real-time feedback</span></div><Badge variant="secondary"><Globe2 size={14} className="mr-1" /> Global</Badge></nav>
+      <section className="mx-auto grid max-w-7xl gap-12 px-6 pb-20 pt-12 md:grid-cols-[1.12fr_0.88fr] md:items-center md:pt-24"><div><Badge className="mb-6 bg-lime-200 text-slate-900 hover:bg-lime-200"><Sparkles size={14} className="mr-1" /> Your unfair practice advantage</Badge><h1 className="max-w-4xl text-5xl font-semibold leading-[0.98] tracking-[-0.065em] md:text-7xl">Train for the moment that matters.</h1><p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">A personal AI coach for high-stakes interviews, exams, and tasks. It adapts the plan to your deadline, challenges your thinking, and gives you a clear next move.</p><div className="mt-8 flex flex-wrap gap-3 text-sm text-slate-500"><span className="flex items-center gap-2"><Check size={16} className="text-emerald-600" /> Emergency to mastery plans</span><span className="flex items-center gap-2"><Check size={16} className="text-emerald-600" /> Multilingual-ready</span></div></div><div className="relative rounded-[2rem] bg-slate-950 p-6 text-white shadow-2xl shadow-slate-900/20 md:p-8"><div className="absolute -right-8 -top-8 h-28 w-28 rounded-full bg-lime-300/20 blur-2xl" /><div className="relative"><div className="flex items-center justify-between"><span className="text-sm text-slate-400">A coach that calibrates</span><span className="rounded-full bg-white/10 px-3 py-1 text-xs text-lime-200">LIVE LOOP</span></div><div className="mt-10 space-y-4"><div className="rounded-2xl bg-white/10 p-4"><div className="flex items-center justify-between text-sm"><span>Time available</span><span className="text-lime-300">3 days</span></div><div className="mt-3 h-2 rounded-full bg-white/10"><div className="h-2 w-1/4 rounded-full bg-lime-300" /></div></div><div className="rounded-2xl bg-white/10 p-4"><div className="flex items-center justify-between text-sm"><span>Focus signal</span><span className="text-lime-300">Communication</span></div><div className="mt-3 flex gap-2">{["Clarity", "Evidence", "Timing"].map((item, index) => <span key={item} className={`rounded-full px-3 py-1 text-xs ${index === 0 ? "bg-lime-300 text-slate-950" : "bg-white/10 text-slate-400"}`}>{item}</span>)}</div></div><div className="rounded-2xl border border-lime-300/30 bg-lime-300/10 p-4"><p className="text-sm text-slate-300">Next best action</p><p className="mt-2 font-medium">Practice one high-frequency question under a timer.</p></div></div></div></div></section>
+      <section className="mx-auto max-w-7xl px-6 pb-16"><div className="mb-8 flex items-end justify-between gap-4"><div><p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Build your plan</p><h2 className="mt-2 text-3xl font-semibold tracking-tight">What are you preparing for?</h2></div><p className="hidden max-w-sm text-right text-sm text-slate-500 md:block">Choose the goal and the clock. The system does the calibration.</p></div><div className="grid gap-4 md:grid-cols-3">{goals.map((item) => { const Icon = item.icon; return <button key={item.id} onClick={() => setGoal(item.id)} className={`text-left transition duration-200 ${goal === item.id ? "-translate-y-1" : "hover:-translate-y-1"}`}><Card className={`h-full transition ${goal === item.id ? "border-slate-950 bg-slate-950 text-white shadow-xl" : "hover:shadow-xl"}`}><CardHeader><div className="flex items-center justify-between"><span className={`grid h-11 w-11 place-items-center rounded-2xl ${goal === item.id ? "bg-lime-300 text-slate-950" : "bg-slate-100 text-slate-900"}`}><Icon size={21} /></span>{item.tag && <Badge variant={goal === item.id ? "default" : "secondary"}>{item.tag}</Badge>}</div><CardTitle className="mt-4 text-xl">{item.title}</CardTitle><CardDescription className={goal === item.id ? "text-slate-300" : ""}>{item.description}</CardDescription></CardHeader></Card></button>; })}</div>{goal && <div className="mt-12"><div className="mb-6 flex items-end justify-between gap-4"><div><p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Step 2</p><h2 className="mt-2 text-3xl font-semibold tracking-tight">How much time do you have?</h2></div><span className="text-sm text-slate-500">Selected: {selectedGoal?.title}</span></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{timelines.map((item) => <button key={item.id} onClick={() => setTimeline(item.id)} className={`rounded-2xl border bg-white p-4 text-left transition ${timeline === item.id ? "border-slate-950 bg-slate-950 text-white shadow-xl" : "border-slate-200 hover:-translate-y-1 hover:shadow-lg"}`}><span className={`mb-6 block h-3 w-3 rounded-full ${item.color}`} /><p className="font-semibold">{item.title}</p><p className={`mt-1 text-sm ${timeline === item.id ? "text-slate-300" : "text-slate-500"}`}>{item.detail}</p></button>)}</div></div>}{goal && timeline && <div className="mt-8 flex flex-col items-start justify-between gap-5 rounded-3xl bg-lime-300 p-6 md:flex-row md:items-center md:p-8"><div><p className="text-sm font-semibold uppercase tracking-widest text-slate-700">Ready when you are</p><h3 className="mt-2 text-2xl font-semibold tracking-tight">{selectedGoal?.title} · {selectedTimeline?.title}</h3><p className="mt-1 text-slate-700">Your plan will prioritize the highest-value practice first.</p></div><Button size="lg" className="bg-slate-950 text-white hover:bg-slate-800" onClick={begin} disabled={start.isPending}>{start.isPending ? "Calibrating…" : "Start my coaching plan"}<ArrowRight size={17} className="ml-2" /></Button></div>}</section>
+      <section className="border-y border-slate-200 bg-white"><div className="mx-auto grid max-w-7xl gap-8 px-6 py-12 md:grid-cols-3">{features.map((item) => { const Icon = item.icon; return <div key={item.title}><Icon size={22} className="text-slate-900" /><h3 className="mt-4 font-semibold">{item.title}</h3><p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">{item.text}</p></div>; })}</div></section><footer className="mx-auto flex max-w-7xl flex-col gap-3 px-6 py-8 text-sm text-slate-500 md:flex-row md:items-center md:justify-between"><span>Global AI Coach · Human-in-the-loop MVP</span><span>Practice with clarity. Show up ready.</span></footer>
+    </main>
   );
 }
+
+type JsonQuestion = { question?: string; context?: string; hints?: string[]; evaluationCriteria?: string[]; estimatedMinutes?: number; coachType?: string };
+type JsonFeedback = { overallScore?: number; communicationScore?: number; confidenceScore?: number; timeManagementScore?: number; strengths?: string[]; improvements?: string[]; detailedFeedback?: string };
