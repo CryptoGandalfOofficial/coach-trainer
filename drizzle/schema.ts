@@ -1,17 +1,7 @@
 import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
 
-/**
- * Core user table backing auth flow.
- * Extend this file with additional tables as your product grows.
- * Columns use camelCase to match both database fields and generated types.
- */
 export const users = mysqlTable("users", {
-  /**
-   * Surrogate primary key. Auto-incremented numeric value managed by the database.
-   * Use this for relations between tables.
-   */
   id: int("id").autoincrement().primaryKey(),
-  /** Manus OAuth identifier (openId) returned from the OAuth callback. Unique per user. */
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
@@ -25,4 +15,61 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
-// TODO: Add your tables here
+export const coachProfiles = mysqlTable("coach_profiles", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
+  preferredLanguage: varchar("preferredLanguage", { length: 32 }).default("en").notNull(),
+  country: varchar("country", { length: 64 }),
+  targetRole: varchar("targetRole", { length: 128 }),
+  experienceLevel: varchar("experienceLevel", { length: 32 }),
+  weeklyMinutes: int("weeklyMinutes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const coachingSessions = mysqlTable("coaching_sessions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  interviewType: varchar("interviewType", { length: 64 }).notNull(),
+  timeline: varchar("timeline", { length: 32 }).notNull(),
+  focus: varchar("focus", { length: 160 }).notNull(),
+  difficulty: varchar("difficulty", { length: 32 }).notNull(),
+  mode: varchar("mode", { length: 64 }).notNull(),
+  plannedSessions: int("plannedSessions").notNull(),
+  completedSessions: int("completedSessions").default(0).notNull(),
+  overallScore: int("overallScore").default(0).notNull(),
+  status: varchar("status", { length: 32 }).default("active").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const practiceAttempts = mysqlTable("practice_attempts", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  sessionId: int("sessionId").notNull().references(() => coachingSessions.id, { onDelete: "cascade" }),
+  question: text("question").notNull(),
+  answer: text("answer").notNull(),
+  overallScore: int("overallScore").notNull(),
+  technicalScore: int("technicalScore"),
+  communicationScore: int("communicationScore"),
+  confidenceScore: int("confidenceScore"),
+  timeManagementScore: int("timeManagementScore"),
+  coachType: varchar("coachType", { length: 32 }).notNull(),
+  timeTaken: int("timeTaken").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const interactionEvents = mysqlTable("interaction_events", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").references(() => users.id, { onDelete: "set null" }),
+  sessionId: int("sessionId").references(() => coachingSessions.id, { onDelete: "set null" }),
+  eventType: varchar("eventType", { length: 64 }).notNull(),
+  path: varchar("path", { length: 64 }).notNull(),
+  metadata: text("metadata"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CoachProfile = typeof coachProfiles.$inferSelect;
+export type CoachingSession = typeof coachingSessions.$inferSelect;
+export type PracticeAttempt = typeof practiceAttempts.$inferSelect;
+export type InteractionEvent = typeof interactionEvents.$inferSelect;
