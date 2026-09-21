@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./db", () => ({
   createCoachingSession: vi.fn().mockResolvedValue(undefined),
-  getAnalyticsSummary: vi.fn().mockResolvedValue({ totalEvents: 0, uniqueUsers: 0, byPath: [], byEvent: [], completionRate: 0 }),
+  getAnalyticsSummary: vi.fn().mockResolvedValue({ totalEvents: 12, uniqueUsers: 4, byPath: [], byEvent: [], completionRate: 50, retentionCohorts: [{ cohort: "2026-09-01", users: 4, weeks: [{ week: 0, retained: 4, rate: 100 }] }], skillTrends: [{ skill: "tech-interview", week: "2026-09-01", attempts: 3, overall: 7, communication: 7, confidence: 6, technical: 8, timeManagement: 7 }], coachQuality: [{ coachType: "ai", attempts: 3, overall: 7, communication: 7, confidence: 6, technical: 8, timeManagement: 7 }] }),
   getUserProgress: vi.fn().mockResolvedValue({ profile: undefined, sessions: [], attempts: [], totals: { sessions: 0, attempts: 0, averageScore: 0 } }),
   recordInteraction: vi.fn().mockResolvedValue(undefined),
   recordPracticeAttempt: vi.fn().mockResolvedValue(undefined),
@@ -32,6 +32,11 @@ describe("Global AI Coach procedures", () => {
     expect(result.sessionId).toBeTypeOf("number");
   });
 
+  it("accepts multilingual profile settings and weekly availability", async () => {
+    const result = await caller().profile.save({ preferredLanguage: "de", country: "Germany", targetRole: "Staff engineer", experienceLevel: "advanced", weeklyMinutes: 480 });
+    expect(result).toBeUndefined();
+  });
+
   it("returns a useful question through the fallback path without an API key", async () => {
     const result = await caller().coach.question({ sessionId: 1, interviewType: "behavioral", difficulty: "intermediate", focus: "conflict resolution" });
     expect(result.coachType).toBe("fallback");
@@ -47,10 +52,11 @@ describe("Global AI Coach procedures", () => {
     expect(result.detailedFeedback).toContain("useful starting point");
   });
 
-  it("requires admin role for the analytics summary", async () => {
+  it("requires admin role and exposes retention, trends, and coach quality analytics", async () => {
     await expect(caller().analytics.summary()).rejects.toMatchObject({ code: "FORBIDDEN" });
     const result = await caller("admin").analytics.summary();
-    expect(result).toHaveProperty("byPath");
-    expect(result).toHaveProperty("completionRate");
+    expect(result.retentionCohorts[0]?.weeks[0]?.rate).toBe(100);
+    expect(result.skillTrends[0]?.skill).toBe("tech-interview");
+    expect(result.coachQuality[0]?.coachType).toBe("ai");
   });
 });

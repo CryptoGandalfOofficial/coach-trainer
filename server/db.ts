@@ -7,12 +7,8 @@ let _db: ReturnType<typeof drizzle> | null = null;
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
-    try {
-      _db = drizzle(process.env.DATABASE_URL);
-    } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
-      _db = null;
-    }
+    try { _db = drizzle(process.env.DATABASE_URL); }
+    catch (error) { console.warn("[Database] Failed to connect:", error); _db = null; }
   }
   return _db;
 }
@@ -94,10 +90,34 @@ export async function recordInteraction(userId: number | undefined, sessionId: n
   await db.insert(interactionEvents).values({ userId, sessionId, eventType: data.eventType, path: data.path, metadata: data.metadata ? JSON.stringify(data.metadata) : null });
 }
 
+function weekStart(date: Date) {
+  const result = new Date(date);
+  result.setHours(0, 0, 0, 0);
+  const day = result.getDay();
+  result.setDate(result.getDate() - day);
+  return result;
+}
+
+function weekKey(date: Date) { return weekStart(date).toISOString().slice(0, 10); }
+function weekDelta(start: Date, end: Date) { return Math.max(0, Math.floor((weekStart(end).getTime() - weekStart(start).getTime()) / 604800000)); }
+
+type ScoreBucket = { count: number; total: number; technical: number; communication: number; confidence: number; time: number };
+function addScore(bucket: ScoreBucket | undefined, attempt: typeof practiceAttempts.$inferSelect) {
+  const next = bucket || { count: 0, total: 0, technical: 0, communication: 0, confidence: 0, time: 0 };
+  next.count += 1; next.total += attempt.overallScore; next.technical += attempt.technicalScore || 0; next.communication += attempt.communicationScore || 0; next.confidence += attempt.confidenceScore || 0; next.time += attempt.timeManagementScore || 0;
+  return next;
+}
+function avg(value: number, count: number) { return count ? Math.round((value / count) * 10) / 10 : 0; }
+
 export async function getAnalyticsSummary() {
   const db = await getDb();
-  if (!db) return { totalEvents: 0, uniqueUsers: 0, byPath: [], byEvent: [], completionRate: 0 };
-  const events = await db.select().from(interactionEvents).orderBy(desc(interactionEvents.createdAt)).limit(10000);
+  if (!db) return { totalEvents: 0, uniqueUsers: 0, byPath: [], byEvent: [], completionRate: 0, retentionCohorts: [], skillTrends: [], coachQuality: [] };
+  const [events, allUsers, attempts, sessions] = await Promise.all([
+    db.select().from(interactionEvents).orderBy(desc(interactionEvents.createdAt)).limit(10000),
+    db.select().from(users).limit(10000),
+    db.select().from(practiceAttempts).orderBy(desc(practiceAttempts.createdAt)).limit(10000),
+    db.select().from(coachingSessions).limit(10000),
+  ]);
   const usersSeen = new Set<number>();
   const paths = new Map<string, number>();
   const eventTypes = new Map<string, number>();
@@ -108,11 +128,42 @@ export async function getAnalyticsSummary() {
   }
   const starts = eventTypes.get("session_started") || 0;
   const completions = eventTypes.get("practice_completed") || 0;
-  return {
-    totalEvents: events.length,
-    uniqueUsers: usersSeen.size,
-    byPath: Array.from(paths, ([path, count]) => ({ path, count })).sort((a, b) => b.count - a.count),
-    byEvent: Array.from(eventTypes, ([eventType, count]) => ({ eventType, count })).sort((a, b) => b.count - a.count),
-    completionRate: starts ? Math.round((completions / starts) * 100) : 0,
-  };
+
+  const activeWeeks = new Map<number, Set<number>>();
+  for (const event of events) {
+    if (!event.userId) continue;
+    const user = allUsers.find((item) => item.id === event.userId);
+    if (!user) continue;
+    const cohort = weekStart(user.createdAt);
+    const weeks = activeWeeks.get(event.userId) || new Set<number>();
+    weeks.add(weekDelta(cohort, event.createdAt));
+    activeWeeks.set(event.userId, weeks);
+  }
+  const cohortBuckets = new Map<string, { users: Set<number>; retained: Map<number, Set<number>> }>();
+  for (const user of allUsers) {
+    const cohort = weekKey(user.createdAt);
+    const bucket = cohortBuckets.get(cohort) || { users: new Set<number>(), retained: new Map<number, Set<number>>() };
+    bucket.users.add(user.id);
+    const weeks = activeWeeks.get(user.id) || new Set<number>();
+    for (const week of Array.from(weeks)) { const set = bucket.retained.get(week) || new Set<number>(); set.add(user.id); bucket.retained.set(week, set); }
+    cohortBuckets.set(cohort, bucket);
+  }
+  const retentionCohorts = Array.from(cohortBuckets.entries()).sort(([a], [b]) => a.localeCompare(b)).slice(-12).map(([cohort, bucket]) => ({ cohort, users: bucket.users.size, weeks: [0, 1, 2, 3, 4].map((week) => ({ week, retained: bucket.retained.get(week)?.size || 0, rate: avg((bucket.retained.get(week)?.size || 0) * 100, bucket.users.size) })) }));
+
+  const sessionById = new Map(sessions.map((session) => [session.id, session]));
+  const skillBuckets = new Map<string, Map<string, ScoreBucket>>();
+  const qualityBuckets = new Map<string, ScoreBucket>();
+  for (const attempt of attempts) {
+    const session = sessionById.get(attempt.sessionId);
+    const skill = session?.interviewType || "unknown";
+    const key = weekKey(attempt.createdAt);
+    const skillMap = skillBuckets.get(skill) || new Map<string, ScoreBucket>();
+    skillMap.set(key, addScore(skillMap.get(key), attempt));
+    skillBuckets.set(skill, skillMap);
+    qualityBuckets.set(attempt.coachType, addScore(qualityBuckets.get(attempt.coachType), attempt));
+  }
+  const skillTrends = Array.from(skillBuckets.entries()).flatMap(([skill, weeks]) => Array.from(weeks.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([week, bucket]) => ({ skill, week, attempts: bucket.count, overall: avg(bucket.total, bucket.count), communication: avg(bucket.communication, bucket.count), confidence: avg(bucket.confidence, bucket.count), technical: avg(bucket.technical, bucket.count), timeManagement: avg(bucket.time, bucket.count) })));
+  const coachQuality = Array.from(qualityBuckets.entries()).map(([coachType, bucket]) => ({ coachType, attempts: bucket.count, overall: avg(bucket.total, bucket.count), communication: avg(bucket.communication, bucket.count), confidence: avg(bucket.confidence, bucket.count), technical: avg(bucket.technical, bucket.count), timeManagement: avg(bucket.time, bucket.count) })).sort((a, b) => b.overall - a.overall);
+
+  return { totalEvents: events.length, uniqueUsers: usersSeen.size, byPath: Array.from(paths, ([path, count]) => ({ path, count })).sort((a, b) => b.count - a.count), byEvent: Array.from(eventTypes, ([eventType, count]) => ({ eventType, count })).sort((a, b) => b.count - a.count), completionRate: starts ? Math.round((completions / starts) * 100) : 0, retentionCohorts, skillTrends, coachQuality };
 }
