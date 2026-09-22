@@ -7,7 +7,7 @@ vi.mock("./db", () => ({
   getAnalyticsSummary: vi.fn().mockResolvedValue({ totalEvents: 12, uniqueUsers: 4, byPath: [], byEvent: [], completionRate: 50, retentionCohorts: [{ cohort: "2026-09-01", users: 4, weeks: [{ week: 0, retained: 4, rate: 100 }] }], skillTrends: [{ skill: "tech-interview", week: "2026-09-01", attempts: 3, overall: 7, communication: 7, confidence: 6, technical: 8, timeManagement: 7 }], coachQuality: [{ coachType: "ai", attempts: 3, overall: 7, communication: 7, confidence: 6, technical: 8, timeManagement: 7 }] }),
   getCoachProfile: vi.fn().mockResolvedValue({ preferredLanguage: "de", country: "Germany", targetRole: "Staff engineer", experienceLevel: "advanced", weeklyMinutes: 480 }),
   getLatestWeeklySummary: vi.fn().mockResolvedValue({ summaryText: "You completed 2 practices.", attempts: 2, averageScore: 8, minutesPracticed: 30, skillTrends: JSON.stringify([{ skill: "tech-interview", score: 8, attempts: 2 }]), retentionRate: 100 }),
-  getWeeklyComparison: vi.fn().mockResolvedValue({ current: { averageScore: 8, minutesPracticed: 30 }, previousWeeks: [{ averageScore: 7, minutesPracticed: 20 }], peerAverageScore: 6.5, peerAverageMinutes: 25 }),
+  getWeeklyComparison: vi.fn().mockResolvedValue({ current: { averageScore: 8, minutesPracticed: 30 }, previousWeeks: [{ averageScore: 7, minutesPracticed: 20 }], trendSeries: [{ weekStart: new Date("2026-09-20"), skillTrends: JSON.stringify([{ skill: "tech-interview", score: 8, attempts: 2 }]) }], peerAverageScore: 6.5, peerAverageMinutes: 25, peerCount: 3 }),
   getUserProgress: vi.fn().mockResolvedValue({ profile: undefined, sessions: [], attempts: [], totals: { sessions: 0, attempts: 0, averageScore: 0 } }),
   recordInteraction: vi.fn().mockResolvedValue(undefined),
   recordPracticeAttempt: vi.fn().mockResolvedValue(undefined),
@@ -95,5 +95,10 @@ describe("Global AI Coach procedures", () => {
     expect(comparison.previousWeeks[0]?.averageScore).toBe(7);
     expect(comparison.peerAverageScore).toBe(6.5);
     expect(comparison).not.toHaveProperty("peerUserIds");
+  });
+
+  it("accepts role, country, and experience filters for peer comparisons", async () => {
+    const comparison = await caller().profile.weeklyComparison({ role: "Engineer", country: "Germany", experienceLevel: "advanced" });
+    expect(comparison.peerAverageMinutes).toBe(25);
   });
 });

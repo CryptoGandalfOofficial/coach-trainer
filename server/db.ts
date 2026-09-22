@@ -78,17 +78,29 @@ export async function getLatestWeeklySummary(userId: number) {
   return result[0] ?? null;
 }
 
-export async function getWeeklyComparison(userId: number) {
+export async function getWeeklyComparison(userId: number, filters?: { role?: string; country?: string; experienceLevel?: string }) {
   const db = await getDb();
-  if (!db) return { current: null, previousWeeks: [], peerAverageScore: 0, peerAverageMinutes: 0 };
-  const summaries = await db.select().from(weeklySummaries).orderBy(desc(weeklySummaries.weekStart)).limit(10000);
+  if (!db) return { current: null, previousWeeks: [], trendSeries: [], peerAverageScore: 0, peerAverageMinutes: 0, peerCount: 0 };
+  const [summaries, profiles] = await Promise.all([
+    db.select().from(weeklySummaries).orderBy(desc(weeklySummaries.weekStart)).limit(10000),
+    db.select().from(coachProfiles).limit(10000),
+  ]);
   const mine = summaries.filter((summary) => summary.userId === userId);
-  const peers = summaries.filter((summary) => summary.userId !== userId);
+  const profileByUser = new Map(profiles.map((profile) => [profile.userId, profile]));
+  const peers = summaries.filter((summary) => {
+    if (summary.userId === userId) return false;
+    const profile = profileByUser.get(summary.userId);
+    return (!filters?.role || profile?.targetRole?.toLowerCase() === filters.role.toLowerCase()) &&
+      (!filters?.country || profile?.country?.toLowerCase() === filters.country.toLowerCase()) &&
+      (!filters?.experienceLevel || profile?.experienceLevel?.toLowerCase() === filters.experienceLevel.toLowerCase());
+  });
   return {
     current: mine[0] ?? null,
     previousWeeks: mine.slice(1, 8),
+    trendSeries: mine.slice(0, 8).map((summary) => ({ weekStart: summary.weekStart, skillTrends: summary.skillTrends })),
     peerAverageScore: peers.length ? Math.round(peers.reduce((sum, summary) => sum + summary.averageScore, 0) / peers.length * 10) / 10 : 0,
     peerAverageMinutes: peers.length ? Math.round(peers.reduce((sum, summary) => sum + summary.minutesPracticed, 0) / peers.length) : 0,
+    peerCount: peers.length,
   };
 }
 
