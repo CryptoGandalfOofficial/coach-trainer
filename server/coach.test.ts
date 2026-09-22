@@ -101,4 +101,10 @@ describe("Global AI Coach procedures", () => {
     const comparison = await caller().profile.weeklyComparison({ role: "Engineer", country: "Germany", experienceLevel: "advanced" });
     expect(comparison.peerAverageMinutes).toBe(25);
   });
+
+  it("starts an accepted module with the selected difficulty and duration", async () => {
+    const session = await caller().coach.start({ interviewType: "tech-interview", timeline: "1-week", difficultyOverride: "expert", durationMinutes: 60 });
+    expect(session.difficulty).toBe("expert");
+    expect(session.durationMinutes).toBe(60);
+  });
 });
