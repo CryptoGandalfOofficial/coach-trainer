@@ -73,9 +73,9 @@ export async function getUserProgress(userId: number) {
 
 export async function getLatestWeeklySummary(userId: number) {
   const db = await getDb();
-  if (!db) return undefined;
+  if (!db) return null;
   const result = await db.select().from(weeklySummaries).where(eq(weeklySummaries.userId, userId)).orderBy(desc(weeklySummaries.weekStart)).limit(1);
-  return result[0];
+  return result[0] ?? null;
 }
 
 function currentWeekStart() {
