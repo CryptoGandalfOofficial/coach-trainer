@@ -22,6 +22,13 @@
       "when": 1789974825340,
       "tag": "0002_great_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1790114153428,
+      "tag": "0003_aspiring_exiles",
+      "breakpoints": true
     }
   ]
 }

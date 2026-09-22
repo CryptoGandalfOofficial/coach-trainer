@@ -82,14 +82,18 @@ export async function createWeeklySummaryForUser(userId: number) {
   const db = await getDb();
   if (!db) return null;
   const weekStart = currentWeekStart();
-  const attempts = await db.select().from(practiceAttempts).where(eq(practiceAttempts.userId, userId)).limit(10000);
+  const [attempts, sessions] = await Promise.all([
+    db.select().from(practiceAttempts).where(eq(practiceAttempts.userId, userId)).limit(10000),
+    db.select().from(coachingSessions).where(eq(coachingSessions.userId, userId)).limit(10000),
+  ]);
   const thisWeek = attempts.filter((attempt) => attempt.createdAt >= weekStart);
   const minutes = thisWeek.reduce((sum, attempt) => sum + attempt.timeTaken, 0);
   const average = thisWeek.length ? Math.round(thisWeek.reduce((sum, attempt) => sum + attempt.overallScore, 0) / thisWeek.length) : 0;
+  const metrics = buildSummaryMetrics(thisWeek, attempts, sessions, weekStart);
   const summaryText = thisWeek.length
     ? `You completed ${thisWeek.length} practice ${thisWeek.length === 1 ? "attempt" : "attempts"} this week, practiced for ${minutes} minutes, and averaged ${average}/10. Keep the streak by choosing one focused drill next.`
     : "No practice attempts were recorded this week. Start with one focused drill to keep your preparation moving.";
-  await db.insert(weeklySummaries).values({ userId, weekStart, attempts: thisWeek.length, averageScore: average, minutesPracticed: minutes, summaryText }).onDuplicateKeyUpdate({ set: { attempts: thisWeek.length, averageScore: average, minutesPracticed: minutes, summaryText, createdAt: new Date() } });
+  await db.insert(weeklySummaries).values({ userId, weekStart, attempts: thisWeek.length, averageScore: average, minutesPracticed: minutes, summaryText, ...metrics }).onDuplicateKeyUpdate({ set: { attempts: thisWeek.length, averageScore: average, minutesPracticed: minutes, summaryText, ...metrics, createdAt: new Date() } });
   return getLatestWeeklySummary(userId);
 }
 
@@ -100,13 +104,30 @@ function currentWeekStart() {
   return result;
 }
 
+function buildSummaryMetrics(thisWeek: Array<typeof practiceAttempts.$inferSelect>, allAttempts: Array<typeof practiceAttempts.$inferSelect>, sessions: Array<typeof coachingSessions.$inferSelect>, weekStart: Date) {
+  const sessionNames = new Map(sessions.map((session) => [session.id, session.interviewType]));
+  const buckets = new Map<string, { total: number; count: number }>();
+  for (const attempt of thisWeek) {
+    const skill = sessionNames.get(attempt.sessionId) || "general";
+    const bucket = buckets.get(skill) || { total: 0, count: 0 };
+    bucket.total += attempt.overallScore;
+    bucket.count += 1;
+    buckets.set(skill, bucket);
+  }
+  const skillTrends = Array.from(buckets, ([skill, bucket]) => ({ skill, score: Math.round(bucket.total / bucket.count), attempts: bucket.count }));
+  const previousWeekStart = new Date(weekStart.getTime() - 604800000);
+  const practicedPreviousWeek = allAttempts.some((attempt) => attempt.createdAt >= previousWeekStart && attempt.createdAt < weekStart);
+  return { skillTrends: JSON.stringify(skillTrends), retentionRate: practicedPreviousWeek ? (thisWeek.length ? 100 : 0) : null };
+}
+
 export async function createWeeklySummaries() {
   const db = await getDb();
   if (!db) return { created: 0, weekStart: currentWeekStart() };
   const weekStart = currentWeekStart();
-  const [allUsers, attempts] = await Promise.all([
+  const [allUsers, attempts, sessions] = await Promise.all([
     db.select().from(users).limit(10000),
     db.select().from(practiceAttempts).limit(10000),
+    db.select().from(coachingSessions).limit(10000),
   ]);
   const thisWeek = attempts.filter((attempt) => attempt.createdAt >= weekStart);
   let created = 0;
@@ -114,10 +135,11 @@ export async function createWeeklySummaries() {
     const userAttempts = thisWeek.filter((attempt) => attempt.userId === user.id);
     const minutes = userAttempts.reduce((sum, attempt) => sum + attempt.timeTaken, 0);
     const average = userAttempts.length ? Math.round(userAttempts.reduce((sum, attempt) => sum + attempt.overallScore, 0) / userAttempts.length) : 0;
+    const metrics = buildSummaryMetrics(userAttempts, attempts.filter((attempt) => attempt.userId === user.id), sessions.filter((session) => session.userId === user.id), weekStart);
     const summaryText = userAttempts.length
       ? `You completed ${userAttempts.length} practice ${userAttempts.length === 1 ? "attempt" : "attempts"} this week, practiced for ${minutes} minutes, and averaged ${average}/10. Keep the streak by choosing one focused drill next.`
       : "No practice attempts were recorded this week. Start with one focused drill to keep your preparation moving.";
-    await db.insert(weeklySummaries).values({ userId: user.id, weekStart, attempts: userAttempts.length, averageScore: average, minutesPracticed: minutes, summaryText }).onDuplicateKeyUpdate({ set: { attempts: userAttempts.length, averageScore: average, minutesPracticed: minutes, summaryText, createdAt: new Date() } });
+    await db.insert(weeklySummaries).values({ userId: user.id, weekStart, attempts: userAttempts.length, averageScore: average, minutesPracticed: minutes, summaryText, ...metrics }).onDuplicateKeyUpdate({ set: { attempts: userAttempts.length, averageScore: average, minutesPracticed: minutes, summaryText, ...metrics, createdAt: new Date() } });
     created += 1;
   }
   return { created, weekStart };
