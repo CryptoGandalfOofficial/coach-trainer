@@ -79,6 +79,7 @@ export const weeklySummaries = mysqlTable("weekly_summaries", {
   summaryText: text("summaryText").notNull(),
   skillTrends: text("skillTrends"),
   retentionRate: int("retentionRate"),
+  recommendedModules: text("recommendedModules"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, (table) => ({ userWeekUnique: unique("weekly_summaries_user_week_unique").on(table.userId, table.weekStart) }));
 

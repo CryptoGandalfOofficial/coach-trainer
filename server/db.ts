@@ -78,6 +78,20 @@ export async function getLatestWeeklySummary(userId: number) {
   return result[0] ?? null;
 }
 
+export async function getWeeklyComparison(userId: number) {
+  const db = await getDb();
+  if (!db) return { current: null, previousWeeks: [], peerAverageScore: 0, peerAverageMinutes: 0 };
+  const summaries = await db.select().from(weeklySummaries).orderBy(desc(weeklySummaries.weekStart)).limit(10000);
+  const mine = summaries.filter((summary) => summary.userId === userId);
+  const peers = summaries.filter((summary) => summary.userId !== userId);
+  return {
+    current: mine[0] ?? null,
+    previousWeeks: mine.slice(1, 8),
+    peerAverageScore: peers.length ? Math.round(peers.reduce((sum, summary) => sum + summary.averageScore, 0) / peers.length * 10) / 10 : 0,
+    peerAverageMinutes: peers.length ? Math.round(peers.reduce((sum, summary) => sum + summary.minutesPracticed, 0) / peers.length) : 0,
+  };
+}
+
 export async function createWeeklySummaryForUser(userId: number) {
   const db = await getDb();
   if (!db) return null;
@@ -114,10 +128,17 @@ function buildSummaryMetrics(thisWeek: Array<typeof practiceAttempts.$inferSelec
     bucket.count += 1;
     buckets.set(skill, bucket);
   }
-  const skillTrends = Array.from(buckets, ([skill, bucket]) => ({ skill, score: Math.round(bucket.total / bucket.count), attempts: bucket.count }));
+  const skillTrends = Array.from(buckets, ([skill, bucket]) => ({ skill, score: Math.round(bucket.total / bucket.count), attempts: bucket.count })).sort((a, b) => a.score - b.score);
+  const moduleCatalog: Record<string, { title: string; reason: string; action: string }> = {
+    "tech-interview": { title: "Algorithm fluency sprint", reason: "Build speed and correctness under pressure.", action: "Complete two timed problems and explain complexity aloud." },
+    behavioral: { title: "Evidence-backed story lab", reason: "Make impact and outcomes more concrete.", action: "Rewrite one story with Situation, Action, and measurable Result." },
+    "system-design": { title: "Architecture trade-off studio", reason: "Strengthen scale, reliability, and decision clarity.", action: "Sketch one design and name three explicit trade-offs." },
+    general: { title: "Structured answer fundamentals", reason: "Improve clarity when no single skill dominates.", action: "Use a three-part answer structure and close with a next step." },
+  };
+  const recommendedModules = (skillTrends.length ? skillTrends.slice(0, 3) : [{ skill: "general", score: 0, attempts: 0 }]).map((item) => ({ skill: item.skill, score: item.score, ...moduleCatalog[item.skill] || moduleCatalog.general }));
   const previousWeekStart = new Date(weekStart.getTime() - 604800000);
   const practicedPreviousWeek = allAttempts.some((attempt) => attempt.createdAt >= previousWeekStart && attempt.createdAt < weekStart);
-  return { skillTrends: JSON.stringify(skillTrends), retentionRate: practicedPreviousWeek ? (thisWeek.length ? 100 : 0) : null };
+  return { skillTrends: JSON.stringify(skillTrends), recommendedModules: JSON.stringify(recommendedModules), retentionRate: practicedPreviousWeek ? (thisWeek.length ? 100 : 0) : null };
 }
 
 export async function createWeeklySummaries() {

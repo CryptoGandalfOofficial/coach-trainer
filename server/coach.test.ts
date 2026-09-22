@@ -3,10 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./db", () => ({
   createCoachingSession: vi.fn().mockResolvedValue(undefined),
   createWeeklySummaries: vi.fn().mockResolvedValue({ created: 4, weekStart: new Date("2026-09-20") }),
-  createWeeklySummaryForUser: vi.fn().mockResolvedValue({ summaryText: "You completed 2 practices.", attempts: 2, averageScore: 8, minutesPracticed: 30, skillTrends: JSON.stringify([{ skill: "tech-interview", score: 8, attempts: 2 }]), retentionRate: 100 }),
+  createWeeklySummaryForUser: vi.fn().mockResolvedValue({ summaryText: "You completed 2 practices.", attempts: 2, averageScore: 8, minutesPracticed: 30, skillTrends: JSON.stringify([{ skill: "tech-interview", score: 8, attempts: 2 }]), recommendedModules: JSON.stringify([{ title: "Algorithm fluency sprint", score: 8, reason: "Build speed.", action: "Complete two timed problems." }]), retentionRate: 100 }),
   getAnalyticsSummary: vi.fn().mockResolvedValue({ totalEvents: 12, uniqueUsers: 4, byPath: [], byEvent: [], completionRate: 50, retentionCohorts: [{ cohort: "2026-09-01", users: 4, weeks: [{ week: 0, retained: 4, rate: 100 }] }], skillTrends: [{ skill: "tech-interview", week: "2026-09-01", attempts: 3, overall: 7, communication: 7, confidence: 6, technical: 8, timeManagement: 7 }], coachQuality: [{ coachType: "ai", attempts: 3, overall: 7, communication: 7, confidence: 6, technical: 8, timeManagement: 7 }] }),
   getCoachProfile: vi.fn().mockResolvedValue({ preferredLanguage: "de", country: "Germany", targetRole: "Staff engineer", experienceLevel: "advanced", weeklyMinutes: 480 }),
   getLatestWeeklySummary: vi.fn().mockResolvedValue({ summaryText: "You completed 2 practices.", attempts: 2, averageScore: 8, minutesPracticed: 30, skillTrends: JSON.stringify([{ skill: "tech-interview", score: 8, attempts: 2 }]), retentionRate: 100 }),
+  getWeeklyComparison: vi.fn().mockResolvedValue({ current: { averageScore: 8, minutesPracticed: 30 }, previousWeeks: [{ averageScore: 7, minutesPracticed: 20 }], peerAverageScore: 6.5, peerAverageMinutes: 25 }),
   getUserProgress: vi.fn().mockResolvedValue({ profile: undefined, sessions: [], attempts: [], totals: { sessions: 0, attempts: 0, averageScore: 0 } }),
   recordInteraction: vi.fn().mockResolvedValue(undefined),
   recordPracticeAttempt: vi.fn().mockResolvedValue(undefined),
@@ -85,6 +86,14 @@ describe("Global AI Coach procedures", () => {
     expect(summary?.attempts).toBe(2);
     expect(summary?.averageScore).toBe(8);
     expect(summary?.skillTrends).toContain("tech-interview");
+    expect(summary?.recommendedModules).toContain("Algorithm fluency sprint");
     expect(summary?.retentionRate).toBe(100);
+  });
+
+  it("returns privacy-safe weekly comparison data", async () => {
+    const comparison = await caller().profile.weeklyComparison();
+    expect(comparison.previousWeeks[0]?.averageScore).toBe(7);
+    expect(comparison.peerAverageScore).toBe(6.5);
+    expect(comparison).not.toHaveProperty("peerUserIds");
   });
 });
