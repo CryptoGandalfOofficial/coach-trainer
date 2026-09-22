@@ -1,7 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { ENV } from "./_core/env";
-import { coachingSessions, coachProfiles, interactionEvents, practiceAttempts, users, type InsertUser } from "../drizzle/schema";
+import { coachingSessions, coachProfiles, interactionEvents, practiceAttempts, users, weeklySummaries, type InsertUser } from "../drizzle/schema";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -69,6 +69,43 @@ export async function getUserProgress(userId: number) {
   ]);
   const averageScore = attempts.length ? Math.round(attempts.reduce((sum, item) => sum + item.overallScore, 0) / attempts.length) : 0;
   return { profile, sessions, attempts, totals: { sessions: sessions.length, attempts: attempts.length, averageScore } };
+}
+
+export async function getLatestWeeklySummary(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(weeklySummaries).where(eq(weeklySummaries.userId, userId)).orderBy(desc(weeklySummaries.weekStart)).limit(1);
+  return result[0];
+}
+
+function currentWeekStart() {
+  const result = new Date();
+  result.setUTCHours(0, 0, 0, 0);
+  result.setUTCDate(result.getUTCDate() - result.getUTCDay());
+  return result;
+}
+
+export async function createWeeklySummaries() {
+  const db = await getDb();
+  if (!db) return { created: 0, weekStart: currentWeekStart() };
+  const weekStart = currentWeekStart();
+  const [allUsers, attempts] = await Promise.all([
+    db.select().from(users).limit(10000),
+    db.select().from(practiceAttempts).limit(10000),
+  ]);
+  const thisWeek = attempts.filter((attempt) => attempt.createdAt >= weekStart);
+  let created = 0;
+  for (const user of allUsers) {
+    const userAttempts = thisWeek.filter((attempt) => attempt.userId === user.id);
+    const minutes = userAttempts.reduce((sum, attempt) => sum + attempt.timeTaken, 0);
+    const average = userAttempts.length ? Math.round(userAttempts.reduce((sum, attempt) => sum + attempt.overallScore, 0) / userAttempts.length) : 0;
+    const summaryText = userAttempts.length
+      ? `You completed ${userAttempts.length} practice ${userAttempts.length === 1 ? "attempt" : "attempts"} this week, practiced for ${minutes} minutes, and averaged ${average}/10. Keep the streak by choosing one focused drill next.`
+      : "No practice attempts were recorded this week. Start with one focused drill to keep your preparation moving.";
+    await db.insert(weeklySummaries).values({ userId: user.id, weekStart, attempts: userAttempts.length, averageScore: average, minutesPracticed: minutes, summaryText }).onDuplicateKeyUpdate({ set: { attempts: userAttempts.length, averageScore: average, minutesPracticed: minutes, summaryText, createdAt: new Date() } });
+    created += 1;
+  }
+  return { created, weekStart };
 }
 
 export async function recordPracticeAttempt(userId: number, sessionId: number, data: { question: string; answer: string; overallScore: number; technicalScore?: number; communicationScore?: number; confidenceScore?: number; timeManagementScore?: number; coachType: string; timeTaken: number }) {

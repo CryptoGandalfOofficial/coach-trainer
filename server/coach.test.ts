@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./db", () => ({
   createCoachingSession: vi.fn().mockResolvedValue(undefined),
+  createWeeklySummaries: vi.fn().mockResolvedValue({ created: 4, weekStart: new Date("2026-09-20") }),
   getAnalyticsSummary: vi.fn().mockResolvedValue({ totalEvents: 12, uniqueUsers: 4, byPath: [], byEvent: [], completionRate: 50, retentionCohorts: [{ cohort: "2026-09-01", users: 4, weeks: [{ week: 0, retained: 4, rate: 100 }] }], skillTrends: [{ skill: "tech-interview", week: "2026-09-01", attempts: 3, overall: 7, communication: 7, confidence: 6, technical: 8, timeManagement: 7 }], coachQuality: [{ coachType: "ai", attempts: 3, overall: 7, communication: 7, confidence: 6, technical: 8, timeManagement: 7 }] }),
+  getCoachProfile: vi.fn().mockResolvedValue({ preferredLanguage: "de", country: "Germany", targetRole: "Staff engineer", experienceLevel: "advanced", weeklyMinutes: 480 }),
+  getLatestWeeklySummary: vi.fn().mockResolvedValue({ summaryText: "You completed 2 practices.", attempts: 2, averageScore: 8, minutesPracticed: 30 }),
   getUserProgress: vi.fn().mockResolvedValue({ profile: undefined, sessions: [], attempts: [], totals: { sessions: 0, attempts: 0, averageScore: 0 } }),
   recordInteraction: vi.fn().mockResolvedValue(undefined),
   recordPracticeAttempt: vi.fn().mockResolvedValue(undefined),
@@ -58,5 +61,21 @@ describe("Global AI Coach procedures", () => {
     expect(result.retentionCohorts[0]?.weeks[0]?.rate).toBe(100);
     expect(result.skillTrends[0]?.skill).toBe("tech-interview");
     expect(result.coachQuality[0]?.coachType).toBe("ai");
+  });
+
+  it("exports analytics as CSV only for administrators", async () => {
+    await expect(caller().analytics.exportCsv()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const csv = await caller("admin").analytics.exportCsv();
+    expect(csv).toContain("section,dimension,period,count,score,detail");
+    expect(csv).toContain("retention");
+    expect(csv).toContain("coach-quality");
+  });
+
+  it("exposes the latest weekly summary and scheduled generation only to the right user types", async () => {
+    const summary = await caller().profile.weeklySummary();
+    expect(summary?.averageScore).toBe(8);
+    await expect(caller().scheduled.generateWeeklySummaries()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const generated = await caller("admin").scheduled.generateWeeklySummaries();
+    expect(generated.created).toBe(4);
   });
 });

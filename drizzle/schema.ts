@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, unique, varchar } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -69,7 +69,19 @@ export const interactionEvents = mysqlTable("interaction_events", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+export const weeklySummaries = mysqlTable("weekly_summaries", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  weekStart: timestamp("weekStart").notNull(),
+  attempts: int("attempts").default(0).notNull(),
+  averageScore: int("averageScore").default(0).notNull(),
+  minutesPracticed: int("minutesPracticed").default(0).notNull(),
+  summaryText: text("summaryText").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (table) => ({ userWeekUnique: unique("weekly_summaries_user_week_unique").on(table.userId, table.weekStart) }));
+
 export type CoachProfile = typeof coachProfiles.$inferSelect;
 export type CoachingSession = typeof coachingSessions.$inferSelect;
 export type PracticeAttempt = typeof practiceAttempts.$inferSelect;
 export type InteractionEvent = typeof interactionEvents.$inferSelect;
+export type WeeklySummary = typeof weeklySummaries.$inferSelect;
