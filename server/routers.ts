@@ -3,7 +3,7 @@ import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_
 import { systemRouter } from "./_core/systemRouter";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
-import { createCoachingSession, createWeeklySummaries, getAnalyticsSummary, getCoachProfile, getLatestWeeklySummary, getUserProgress, recordInteraction, recordPracticeAttempt, upsertCoachProfile } from "./db";
+import { createCoachingSession, createWeeklySummaries, createWeeklySummaryForUser, getAnalyticsSummary, getCoachProfile, getLatestWeeklySummary, getUserProgress, recordInteraction, recordPracticeAttempt, upsertCoachProfile } from "./db";
 
 type JsonRecord = Record<string, unknown>;
 const interviewTypes = z.enum(["tech-interview", "behavioral", "system-design"]);
@@ -79,6 +79,7 @@ export const appRouter = router({
     save: protectedProcedure.input(z.object({ preferredLanguage: z.string().max(32).optional(), country: z.string().max(64).optional(), targetRole: z.string().max(128).optional(), experienceLevel: z.string().max(32).optional(), weeklyMinutes: z.number().int().min(0).max(10000).optional() })).mutation(({ ctx, input }) => upsertCoachProfile(ctx.user.id, input)),
     progress: protectedProcedure.query(({ ctx }) => getUserProgress(ctx.user.id)),
     weeklySummary: protectedProcedure.query(({ ctx }) => getLatestWeeklySummary(ctx.user.id)),
+    generateWeeklySummary: protectedProcedure.mutation(({ ctx }) => createWeeklySummaryForUser(ctx.user.id)),
   }),
   coach: router({
     start: protectedProcedure.input(z.object({ interviewType: interviewTypes, timeline: timelines })).mutation(async ({ ctx, input }) => { const plan = plans[input.interviewType][input.timeline]; const persisted = await createCoachingSession(ctx.user.id, { interviewType: input.interviewType, timeline: input.timeline, focus: plan.focus, difficulty: plan.difficulty, mode: plan.mode, plannedSessions: plan.sessions }); await recordInteraction(ctx.user.id, persisted?.id, { eventType: "session_started", path: input.interviewType, metadata: { timeline: input.timeline, mode: plan.mode } }); return { sessionId: persisted?.id ?? Date.now(), ...plan, interviewType: input.interviewType, timeline: input.timeline }; }),

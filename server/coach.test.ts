@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./db", () => ({
   createCoachingSession: vi.fn().mockResolvedValue(undefined),
   createWeeklySummaries: vi.fn().mockResolvedValue({ created: 4, weekStart: new Date("2026-09-20") }),
+  createWeeklySummaryForUser: vi.fn().mockResolvedValue({ summaryText: "You completed 2 practices.", attempts: 2, averageScore: 8, minutesPracticed: 30 }),
   getAnalyticsSummary: vi.fn().mockResolvedValue({ totalEvents: 12, uniqueUsers: 4, byPath: [], byEvent: [], completionRate: 50, retentionCohorts: [{ cohort: "2026-09-01", users: 4, weeks: [{ week: 0, retained: 4, rate: 100 }] }], skillTrends: [{ skill: "tech-interview", week: "2026-09-01", attempts: 3, overall: 7, communication: 7, confidence: 6, technical: 8, timeManagement: 7 }], coachQuality: [{ coachType: "ai", attempts: 3, overall: 7, communication: 7, confidence: 6, technical: 8, timeManagement: 7 }] }),
   getCoachProfile: vi.fn().mockResolvedValue({ preferredLanguage: "de", country: "Germany", targetRole: "Staff engineer", experienceLevel: "advanced", weeklyMinutes: 480 }),
   getLatestWeeklySummary: vi.fn().mockResolvedValue({ summaryText: "You completed 2 practices.", attempts: 2, averageScore: 8, minutesPracticed: 30 }),
@@ -77,5 +78,11 @@ describe("Global AI Coach procedures", () => {
     await expect(caller().scheduled.generateWeeklySummaries()).rejects.toMatchObject({ code: "FORBIDDEN" });
     const generated = await caller("admin").scheduled.generateWeeklySummaries();
     expect(generated.created).toBe(4);
+  });
+
+  it("allows an authenticated user to manually refresh only their own weekly summary", async () => {
+    const summary = await caller().profile.generateWeeklySummary();
+    expect(summary?.attempts).toBe(2);
+    expect(summary?.averageScore).toBe(8);
   });
 });

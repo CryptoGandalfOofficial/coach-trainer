@@ -78,6 +78,21 @@ export async function getLatestWeeklySummary(userId: number) {
   return result[0] ?? null;
 }
 
+export async function createWeeklySummaryForUser(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const weekStart = currentWeekStart();
+  const attempts = await db.select().from(practiceAttempts).where(eq(practiceAttempts.userId, userId)).limit(10000);
+  const thisWeek = attempts.filter((attempt) => attempt.createdAt >= weekStart);
+  const minutes = thisWeek.reduce((sum, attempt) => sum + attempt.timeTaken, 0);
+  const average = thisWeek.length ? Math.round(thisWeek.reduce((sum, attempt) => sum + attempt.overallScore, 0) / thisWeek.length) : 0;
+  const summaryText = thisWeek.length
+    ? `You completed ${thisWeek.length} practice ${thisWeek.length === 1 ? "attempt" : "attempts"} this week, practiced for ${minutes} minutes, and averaged ${average}/10. Keep the streak by choosing one focused drill next.`
+    : "No practice attempts were recorded this week. Start with one focused drill to keep your preparation moving.";
+  await db.insert(weeklySummaries).values({ userId, weekStart, attempts: thisWeek.length, averageScore: average, minutesPracticed: minutes, summaryText }).onDuplicateKeyUpdate({ set: { attempts: thisWeek.length, averageScore: average, minutesPracticed: minutes, summaryText, createdAt: new Date() } });
+  return getLatestWeeklySummary(userId);
+}
+
 function currentWeekStart() {
   const result = new Date();
   result.setUTCHours(0, 0, 0, 0);
