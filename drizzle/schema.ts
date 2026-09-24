@@ -25,6 +25,7 @@ export const coachProfiles = mysqlTable("coach_profiles", {
   weeklyMinutes: int("weeklyMinutes"),
   preferredModuleDifficulty: varchar("preferredModuleDifficulty", { length: 32 }).default("intermediate").notNull(),
   preferredModuleDuration: int("preferredModuleDuration").default(30).notNull(),
+  savedDateRanges: text("savedDateRanges"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

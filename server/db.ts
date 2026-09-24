@@ -36,7 +36,7 @@ export async function getUserByOpenId(openId: string) {
   return result[0];
 }
 
-export async function upsertCoachProfile(userId: number, input: { preferredLanguage?: string; country?: string; targetRole?: string; experienceLevel?: string; weeklyMinutes?: number; preferredModuleDifficulty?: string; preferredModuleDuration?: number }) {
+export async function upsertCoachProfile(userId: number, input: { preferredLanguage?: string; country?: string; targetRole?: string; experienceLevel?: string; weeklyMinutes?: number; preferredModuleDifficulty?: string; preferredModuleDuration?: number; savedDateRanges?: string }) {
   const db = await getDb();
   if (!db) return undefined;
   await db.insert(coachProfiles).values({ userId, ...input }).onDuplicateKeyUpdate({ set: { ...input, updatedAt: new Date() } });
@@ -49,6 +49,21 @@ export async function getCoachProfile(userId: number) {
   if (!db) return undefined;
   const result = await db.select().from(coachProfiles).where(eq(coachProfiles.userId, userId)).limit(1);
   return result[0];
+}
+
+export type SavedDateRange = { name: string; startDate: string; endDate: string };
+
+export async function getSavedDateRanges(userId: number): Promise<SavedDateRange[]> {
+  const profile = await getCoachProfile(userId);
+  if (!profile?.savedDateRanges) return [];
+  try { return JSON.parse(profile.savedDateRanges) as SavedDateRange[]; } catch { return []; }
+}
+
+export async function saveDateRange(userId: number, input: SavedDateRange) {
+  const ranges = (await getSavedDateRanges(userId)).filter((range) => range.name.toLowerCase() !== input.name.toLowerCase());
+  const next = [input, ...ranges].slice(0, 20);
+  await upsertCoachProfile(userId, { savedDateRanges: JSON.stringify(next) });
+  return next;
 }
 
 export async function createCoachingSession(userId: number, data: { interviewType: string; timeline: string; focus: string; difficulty: string; mode: string; plannedSessions: number }) {
