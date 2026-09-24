@@ -1,0 +1,2 @@
+ALTER TABLE `coach_profiles` ADD `preferredModuleDifficulty` varchar(32) DEFAULT 'intermediate' NOT NULL;--> statement-breakpoint
+ALTER TABLE `coach_profiles` ADD `preferredModuleDuration` int DEFAULT 30 NOT NULL;

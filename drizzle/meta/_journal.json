@@ -36,6 +36,13 @@
       "when": 1790114537974,
       "tag": "0004_small_mister_fear",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1790115702717,
+      "tag": "0005_clever_the_initiative",
+      "breakpoints": true
     }
   ]
 }

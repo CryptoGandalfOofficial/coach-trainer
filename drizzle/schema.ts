@@ -23,6 +23,8 @@ export const coachProfiles = mysqlTable("coach_profiles", {
   targetRole: varchar("targetRole", { length: 128 }),
   experienceLevel: varchar("experienceLevel", { length: 32 }),
   weeklyMinutes: int("weeklyMinutes"),
+  preferredModuleDifficulty: varchar("preferredModuleDifficulty", { length: 32 }).default("intermediate").notNull(),
+  preferredModuleDuration: int("preferredModuleDuration").default(30).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

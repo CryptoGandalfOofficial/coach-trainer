@@ -36,7 +36,7 @@ export async function getUserByOpenId(openId: string) {
   return result[0];
 }
 
-export async function upsertCoachProfile(userId: number, input: { preferredLanguage?: string; country?: string; targetRole?: string; experienceLevel?: string; weeklyMinutes?: number }) {
+export async function upsertCoachProfile(userId: number, input: { preferredLanguage?: string; country?: string; targetRole?: string; experienceLevel?: string; weeklyMinutes?: number; preferredModuleDifficulty?: string; preferredModuleDuration?: number }) {
   const db = await getDb();
   if (!db) return undefined;
   await db.insert(coachProfiles).values({ userId, ...input }).onDuplicateKeyUpdate({ set: { ...input, updatedAt: new Date() } });
@@ -78,17 +78,20 @@ export async function getLatestWeeklySummary(userId: number) {
   return result[0] ?? null;
 }
 
-export async function getWeeklyComparison(userId: number, filters?: { role?: string; country?: string; experienceLevel?: string }) {
+export async function getWeeklyComparison(userId: number, filters?: { role?: string; country?: string; experienceLevel?: string; startDate?: string; endDate?: string }) {
   const db = await getDb();
   if (!db) return { current: null, previousWeeks: [], trendSeries: [], peerAverageScore: 0, peerAverageMinutes: 0, peerCount: 0 };
   const [summaries, profiles] = await Promise.all([
     db.select().from(weeklySummaries).orderBy(desc(weeklySummaries.weekStart)).limit(10000),
     db.select().from(coachProfiles).limit(10000),
   ]);
-  const mine = summaries.filter((summary) => summary.userId === userId);
+  const startDate = filters?.startDate ? new Date(`${filters.startDate}T00:00:00.000Z`) : null;
+  const endDate = filters?.endDate ? new Date(`${filters.endDate}T23:59:59.999Z`) : null;
+  const inRange = (summary: typeof weeklySummaries.$inferSelect) => (!startDate || summary.weekStart >= startDate) && (!endDate || summary.weekStart <= endDate);
+  const mine = summaries.filter((summary) => summary.userId === userId && inRange(summary));
   const profileByUser = new Map(profiles.map((profile) => [profile.userId, profile]));
   const peers = summaries.filter((summary) => {
-    if (summary.userId === userId) return false;
+    if (summary.userId === userId || !inRange(summary)) return false;
     const profile = profileByUser.get(summary.userId);
     return (!filters?.role || profile?.targetRole?.toLowerCase() === filters.role.toLowerCase()) &&
       (!filters?.country || profile?.country?.toLowerCase() === filters.country.toLowerCase()) &&

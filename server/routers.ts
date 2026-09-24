@@ -76,10 +76,10 @@ export const appRouter = router({
   system: systemRouter,
   auth: router({ me: publicProcedure.query((opts) => opts.ctx.user), logout: publicProcedure.mutation(({ ctx }) => { const cookieOptions = getSessionCookieOptions(ctx.req); ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 }); return { success: true } as const; }) }),
   profile: router({
-    save: protectedProcedure.input(z.object({ preferredLanguage: z.string().max(32).optional(), country: z.string().max(64).optional(), targetRole: z.string().max(128).optional(), experienceLevel: z.string().max(32).optional(), weeklyMinutes: z.number().int().min(0).max(10000).optional() })).mutation(({ ctx, input }) => upsertCoachProfile(ctx.user.id, input)),
+    save: protectedProcedure.input(z.object({ preferredLanguage: z.string().max(32).optional(), country: z.string().max(64).optional(), targetRole: z.string().max(128).optional(), experienceLevel: z.string().max(32).optional(), weeklyMinutes: z.number().int().min(0).max(10000).optional(), preferredModuleDifficulty: z.enum(["beginner", "intermediate", "advanced", "expert"]).optional(), preferredModuleDuration: z.number().int().min(5).max(180).optional() })).mutation(({ ctx, input }) => upsertCoachProfile(ctx.user.id, input)),
     progress: protectedProcedure.query(({ ctx }) => getUserProgress(ctx.user.id)),
     weeklySummary: protectedProcedure.query(({ ctx }) => getLatestWeeklySummary(ctx.user.id)),
-    weeklyComparison: protectedProcedure.input(z.object({ role: z.string().max(128).optional(), country: z.string().max(64).optional(), experienceLevel: z.string().max(32).optional() }).optional()).query(({ ctx, input }) => getWeeklyComparison(ctx.user.id, input)),
+    weeklyComparison: protectedProcedure.input(z.object({ role: z.string().max(128).optional(), country: z.string().max(64).optional(), experienceLevel: z.string().max(32).optional(), startDate: z.string().date().optional(), endDate: z.string().date().optional() }).optional()).query(({ ctx, input }) => getWeeklyComparison(ctx.user.id, input)),
     generateWeeklySummary: protectedProcedure.mutation(({ ctx }) => createWeeklySummaryForUser(ctx.user.id)),
   }),
   coach: router({
