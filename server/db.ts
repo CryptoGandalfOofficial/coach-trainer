@@ -66,6 +66,19 @@ export async function saveDateRange(userId: number, input: SavedDateRange) {
   return next;
 }
 
+export async function updateDateRange(userId: number, originalName: string, input: SavedDateRange) {
+  const ranges = (await getSavedDateRanges(userId)).filter((range) => range.name.toLowerCase() !== originalName.toLowerCase() && range.name.toLowerCase() !== input.name.toLowerCase());
+  const next = [input, ...ranges].slice(0, 20);
+  await upsertCoachProfile(userId, { savedDateRanges: JSON.stringify(next) });
+  return next;
+}
+
+export async function deleteDateRange(userId: number, name: string) {
+  const next = (await getSavedDateRanges(userId)).filter((range) => range.name.toLowerCase() !== name.toLowerCase());
+  await upsertCoachProfile(userId, { savedDateRanges: JSON.stringify(next) });
+  return next;
+}
+
 export async function createCoachingSession(userId: number, data: { interviewType: string; timeline: string; focus: string; difficulty: string; mode: string; plannedSessions: number }) {
   const db = await getDb();
   if (!db) return undefined;
@@ -95,7 +108,7 @@ export async function getLatestWeeklySummary(userId: number) {
 
 export async function getWeeklyComparison(userId: number, filters?: { role?: string; country?: string; experienceLevel?: string; startDate?: string; endDate?: string }) {
   const db = await getDb();
-  if (!db) return { current: null, previousWeeks: [], trendSeries: [], peerAverageScore: 0, peerAverageMinutes: 0, peerCount: 0 };
+  if (!db) return { current: null, previousWeeks: [], trendSeries: [], peerAverageScore: 0, peerAverageMinutes: 0, peerCount: 0, peerAverageBySkill: [] };
   const [summaries, profiles] = await Promise.all([
     db.select().from(weeklySummaries).orderBy(desc(weeklySummaries.weekStart)).limit(10000),
     db.select().from(coachProfiles).limit(10000),
@@ -112,6 +125,21 @@ export async function getWeeklyComparison(userId: number, filters?: { role?: str
       (!filters?.country || profile?.country?.toLowerCase() === filters.country.toLowerCase()) &&
       (!filters?.experienceLevel || profile?.experienceLevel?.toLowerCase() === filters.experienceLevel.toLowerCase());
   });
+  const peerSkills = new Map<string, { total: number; count: number }>();
+  for (const summary of peers) {
+    if (!summary.skillTrends) continue;
+    try {
+      const trends = JSON.parse(summary.skillTrends) as Array<{ skill?: string; score?: number; attempts?: number }>;
+      for (const trend of trends) {
+        if (!trend.skill || typeof trend.score !== "number") continue;
+        const bucket = peerSkills.get(trend.skill) || { total: 0, count: 0 };
+        const weight = Math.max(1, trend.attempts || 1);
+        bucket.total += trend.score * weight;
+        bucket.count += weight;
+        peerSkills.set(trend.skill, bucket);
+      }
+    } catch { /* Ignore malformed legacy summary metrics. */ }
+  }
   return {
     current: mine[0] ?? null,
     previousWeeks: mine.slice(1, 8),
@@ -119,6 +147,7 @@ export async function getWeeklyComparison(userId: number, filters?: { role?: str
     peerAverageScore: peers.length ? Math.round(peers.reduce((sum, summary) => sum + summary.averageScore, 0) / peers.length * 10) / 10 : 0,
     peerAverageMinutes: peers.length ? Math.round(peers.reduce((sum, summary) => sum + summary.minutesPracticed, 0) / peers.length) : 0,
     peerCount: peers.length,
+    peerAverageBySkill: Array.from(peerSkills, ([skill, bucket]) => ({ skill, score: Math.round((bucket.total / bucket.count) * 10) / 10, attempts: bucket.count })),
   };
 }
 

@@ -3,7 +3,7 @@ import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_
 import { systemRouter } from "./_core/systemRouter";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
-import { createCoachingSession, createWeeklySummaries, createWeeklySummaryForUser, getAnalyticsSummary, getCoachProfile, getLatestWeeklySummary, getSavedDateRanges, getUserProgress, getWeeklyComparison, recordInteraction, recordPracticeAttempt, saveDateRange, upsertCoachProfile } from "./db";
+import { createCoachingSession, createWeeklySummaries, createWeeklySummaryForUser, deleteDateRange, getAnalyticsSummary, getCoachProfile, getLatestWeeklySummary, getSavedDateRanges, getUserProgress, getWeeklyComparison, recordInteraction, recordPracticeAttempt, saveDateRange, updateDateRange, upsertCoachProfile } from "./db";
 
 type JsonRecord = Record<string, unknown>;
 const interviewTypes = z.enum(["tech-interview", "behavioral", "system-design"]);
@@ -80,6 +80,8 @@ export const appRouter = router({
     progress: protectedProcedure.query(({ ctx }) => getUserProgress(ctx.user.id)),
     savedDateRanges: protectedProcedure.query(({ ctx }) => getSavedDateRanges(ctx.user.id)),
     saveDateRange: protectedProcedure.input(z.object({ name: z.string().trim().min(1).max(64), startDate: z.string().date(), endDate: z.string().date() })).mutation(({ ctx, input }) => saveDateRange(ctx.user.id, input)),
+    updateDateRange: protectedProcedure.input(z.object({ originalName: z.string().trim().min(1).max(64), name: z.string().trim().min(1).max(64), startDate: z.string().date(), endDate: z.string().date() })).mutation(({ ctx, input }) => updateDateRange(ctx.user.id, input.originalName, { name: input.name, startDate: input.startDate, endDate: input.endDate })),
+    deleteDateRange: protectedProcedure.input(z.object({ name: z.string().trim().min(1).max(64) })).mutation(({ ctx, input }) => deleteDateRange(ctx.user.id, input.name)),
     weeklySummary: protectedProcedure.query(({ ctx }) => getLatestWeeklySummary(ctx.user.id)),
     weeklyComparison: protectedProcedure.input(z.object({ role: z.string().max(128).optional(), country: z.string().max(64).optional(), experienceLevel: z.string().max(32).optional(), startDate: z.string().date().optional(), endDate: z.string().date().optional() }).optional()).query(({ ctx, input }) => getWeeklyComparison(ctx.user.id, input)),
     generateWeeklySummary: protectedProcedure.mutation(({ ctx }) => createWeeklySummaryForUser(ctx.user.id)),

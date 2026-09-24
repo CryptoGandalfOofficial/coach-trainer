@@ -8,12 +8,14 @@ vi.mock("./db", () => ({
   getCoachProfile: vi.fn().mockResolvedValue({ preferredLanguage: "de", country: "Germany", targetRole: "Staff engineer", experienceLevel: "advanced", weeklyMinutes: 480, preferredModuleDifficulty: "advanced", preferredModuleDuration: 45 }),
   getLatestWeeklySummary: vi.fn().mockResolvedValue({ summaryText: "You completed 2 practices.", attempts: 2, averageScore: 8, minutesPracticed: 30, skillTrends: JSON.stringify([{ skill: "tech-interview", score: 8, attempts: 2 }]), retentionRate: 100 }),
   getSavedDateRanges: vi.fn().mockResolvedValue([{ name: "Interview sprint", startDate: "2026-09-01", endDate: "2026-09-23" }]),
-  getWeeklyComparison: vi.fn().mockResolvedValue({ current: { averageScore: 8, minutesPracticed: 30 }, previousWeeks: [{ averageScore: 7, minutesPracticed: 20 }], trendSeries: [{ weekStart: new Date("2026-09-20"), skillTrends: JSON.stringify([{ skill: "tech-interview", score: 8, attempts: 2 }]) }], peerAverageScore: 6.5, peerAverageMinutes: 25, peerCount: 3 }),
+  getWeeklyComparison: vi.fn().mockResolvedValue({ current: { averageScore: 8, minutesPracticed: 30 }, previousWeeks: [{ averageScore: 7, minutesPracticed: 20 }], trendSeries: [{ weekStart: new Date("2026-09-20"), skillTrends: JSON.stringify([{ skill: "tech-interview", score: 8, attempts: 2 }]) }], peerAverageScore: 6.5, peerAverageMinutes: 25, peerCount: 3, peerAverageBySkill: [{ skill: "tech-interview", score: 6.5, attempts: 4 }] }),
   getUserProgress: vi.fn().mockResolvedValue({ profile: undefined, sessions: [], attempts: [], totals: { sessions: 0, attempts: 0, averageScore: 0 } }),
   recordInteraction: vi.fn().mockResolvedValue(undefined),
   recordPracticeAttempt: vi.fn().mockResolvedValue(undefined),
   upsertCoachProfile: vi.fn().mockResolvedValue(undefined),
   saveDateRange: vi.fn().mockResolvedValue([{ name: "Interview sprint", startDate: "2026-09-01", endDate: "2026-09-23" }]),
+  updateDateRange: vi.fn().mockResolvedValue([{ name: "Final week", startDate: "2026-09-16", endDate: "2026-09-23" }]),
+  deleteDateRange: vi.fn().mockResolvedValue([]),
 }));
 
 import { appRouter } from "./routers";
@@ -115,5 +117,8 @@ describe("Global AI Coach procedures", () => {
     expect(ranges[0]?.name).toBe("Interview sprint");
     const saved = await caller().profile.saveDateRange({ name: "Final week", startDate: "2026-09-16", endDate: "2026-09-23" });
     expect(saved[0]?.name).toBe("Interview sprint");
+    const updated = await caller().profile.updateDateRange({ originalName: "Interview sprint", name: "Final week", startDate: "2026-09-16", endDate: "2026-09-23" });
+    expect(updated[0]?.name).toBe("Final week");
+    expect(await caller().profile.deleteDateRange({ name: "Final week" })).toEqual([]);
   });
 });
