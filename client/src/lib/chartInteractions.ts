@@ -10,6 +10,15 @@ export function swipeDirection(deltaX: number) {
   return deltaX < 0 ? 1 : -1;
 }
 
+export function easeOutCubic(progress: number) {
+  const clamped = Math.min(1, Math.max(0, progress));
+  return 1 - Math.pow(1 - clamped, 3);
+}
+
+export function boundedWindowStart(current: number, delta: number, maxStart: number) {
+  return Math.max(0, Math.min(maxStart, current + delta));
+}
+
 export function confidenceForSampleSize(sampleSize: number) {
   if (sampleSize >= 10) return "high";
   if (sampleSize >= 5) return "medium";

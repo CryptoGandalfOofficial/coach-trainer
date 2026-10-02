@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateSwipeSteps, confidenceForSampleSize, swipeDirection, undoRangePayload } from "./chartInteractions";
+import { boundedWindowStart, calculateSwipeSteps, confidenceForSampleSize, easeOutCubic, swipeDirection, undoRangePayload } from "./chartInteractions";
 
 describe("chart touch interactions", () => {
   it("turns a fast swipe into multiple bounded navigation steps", () => {
@@ -8,6 +8,11 @@ describe("chart touch interactions", () => {
     expect(swipeDirection(-120)).toBe(1);
     expect(swipeDirection(120)).toBe(-1);
     expect(calculateSwipeSteps(20, 10, 8)).toBe(0);
+    expect(easeOutCubic(0)).toBe(0);
+    expect(easeOutCubic(1)).toBe(1);
+    expect(easeOutCubic(0.5)).toBeGreaterThan(0.5);
+    expect(boundedWindowStart(2, 4, 5)).toBe(5);
+    expect(boundedWindowStart(2, -4, 5)).toBe(0);
   });
 
   it("explains peer confidence at the configured sample thresholds", () => {
