@@ -8,7 +8,7 @@ vi.mock("./db", () => ({
   getCoachProfile: vi.fn().mockResolvedValue({ preferredLanguage: "de", country: "Germany", targetRole: "Staff engineer", experienceLevel: "advanced", weeklyMinutes: 480, preferredModuleDifficulty: "advanced", preferredModuleDuration: 45 }),
   getLatestWeeklySummary: vi.fn().mockResolvedValue({ summaryText: "You completed 2 practices.", attempts: 2, averageScore: 8, minutesPracticed: 30, skillTrends: JSON.stringify([{ skill: "tech-interview", score: 8, attempts: 2 }]), retentionRate: 100 }),
   getSavedDateRanges: vi.fn().mockResolvedValue([{ name: "Interview sprint", startDate: "2026-09-01", endDate: "2026-09-23" }]),
-  getWeeklyComparison: vi.fn().mockResolvedValue({ current: { averageScore: 8, minutesPracticed: 30 }, previousWeeks: [{ averageScore: 7, minutesPracticed: 20 }], trendSeries: [{ weekStart: new Date("2026-09-20"), skillTrends: JSON.stringify([{ skill: "tech-interview", score: 8, attempts: 2 }]) }], peerAverageScore: 6.5, peerAverageMinutes: 25, peerCount: 3, peerAverageBySkill: [{ skill: "tech-interview", score: 6.5, attempts: 4 }] }),
+  getWeeklyComparison: vi.fn().mockResolvedValue({ current: { averageScore: 8, minutesPracticed: 30 }, previousWeeks: [{ averageScore: 7, minutesPracticed: 20 }], trendSeries: [{ weekStart: new Date("2026-09-20"), skillTrends: JSON.stringify([{ skill: "tech-interview", score: 8, attempts: 2 }]) }], peerAverageScore: 6.5, peerAverageMinutes: 25, peerCount: 3, peerAverageBySkill: [{ skill: "tech-interview", score: 6.5, attempts: 4, sampleSize: 1, confidence: "low" }] }),
   getUserProgress: vi.fn().mockResolvedValue({ profile: undefined, sessions: [], attempts: [], totals: { sessions: 0, attempts: 0, averageScore: 0 } }),
   recordInteraction: vi.fn().mockResolvedValue(undefined),
   recordPracticeAttempt: vi.fn().mockResolvedValue(undefined),
@@ -98,6 +98,8 @@ describe("Global AI Coach procedures", () => {
     const comparison = await caller().profile.weeklyComparison();
     expect(comparison.previousWeeks[0]?.averageScore).toBe(7);
     expect(comparison.peerAverageScore).toBe(6.5);
+    expect(comparison.peerAverageBySkill[0]?.sampleSize).toBe(1);
+    expect(comparison.peerAverageBySkill[0]?.confidence).toBe("low");
     expect(comparison).not.toHaveProperty("peerUserIds");
   });
 
