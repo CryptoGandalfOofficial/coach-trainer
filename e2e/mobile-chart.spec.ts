@@ -10,6 +10,7 @@ test.describe("mobile trend chart gestures", () => {
     const chart = page.getByTestId("skill-trend-chart");
     if (!(await chart.count())) test.skip(true, "Authenticated trend chart data is required; provide E2E_STORAGE_STATE");
     await expect(page.getByRole("button", { name: "Reset trend chart view" })).toBeVisible();
+    await expect(chart).toHaveScreenshot("mobile-trend-chart.png", { animations: "disabled" });
     const position = page.getByTestId("chart-range-position");
     const before = await position.getAttribute("data-window");
     await chart.evaluate((node) => {
@@ -18,14 +19,17 @@ test.describe("mobile trend chart gestures", () => {
       node.dispatchEvent(new TouchEvent("touchend", { bubbles: true, touches: [], changedTouches: [touch(80, 400)] }));
     });
     await expect.poll(() => position.getAttribute("data-window")).not.toBe(before);
+    await expect(page.locator("[aria-live='polite']")).toContainText("Moving to chart window");
     await page.getByRole("button", { name: "Reset trend chart view" }).click();
     await expect(position).toHaveAttribute("data-window", "1");
+    await expect(page.locator("[aria-live='polite']")).toContainText("Chart view reset");
   });
 
   test("supports pinch zoom on a touch viewport", async ({ page }) => {
     const chart = page.getByTestId("skill-trend-chart");
     if (!(await chart.count())) test.skip(true, "Authenticated trend chart data is required; provide E2E_STORAGE_STATE");
     await expect(page.getByText("1× zoom")).toBeVisible();
+    await expect(chart).toHaveScreenshot("mobile-trend-chart-before-pinch.png", { animations: "disabled" });
     await chart.evaluate((node) => {
       const touch = (x: number, y: number, id: number) => new Touch({ identifier: id, target: node, clientX: x, clientY: y });
       const first = touch(120, 400, 1);
@@ -37,5 +41,6 @@ test.describe("mobile trend chart gestures", () => {
       node.dispatchEvent(new TouchEvent("touchend", { bubbles: true, touches: [], changedTouches: [expanded, expandedSecond] }));
     });
     await expect(page.getByText("2× zoom")).toBeVisible();
+    await expect(page.locator("[aria-live='polite']")).toContainText("Zoom 2 times");
   });
 });
