@@ -41,6 +41,24 @@ jobs:
       - name: Run credential-free mock protected suite
         run: pnpm test:e2e:mock
 
+      - name: Upload mock baseline images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-chart-mock-baselines
+          path: e2e/mobile-chart.mock.spec.ts-snapshots/
+          if-no-files-found: error
+
+      - name: Upload mock Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-mock-e2e-artifacts
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+
   protected-e2e:
     name: Protected mobile E2E
     env:
