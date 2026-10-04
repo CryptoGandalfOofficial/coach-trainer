@@ -38,6 +38,9 @@ jobs:
       - name: Run axe-core audit
         run: pnpm test:e2e:a11y
 
+      - name: Run credential-free mock protected suite
+        run: pnpm test:e2e:mock
+
   protected-e2e:
     name: Protected mobile E2E
     env:
