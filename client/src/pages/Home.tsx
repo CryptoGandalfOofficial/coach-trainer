@@ -60,6 +60,17 @@ type ProfileDraft = {
     | "expert";
   preferredModuleDuration: number;
 };
+type TargetStandardDraft = {
+  outcomeType: string;
+  targetName: string;
+  evaluator: string;
+  jurisdiction: string;
+  targetDate: string;
+  language: string;
+  format: string;
+  sourceUrl: string;
+  notes: string;
+};
 
 const goals: Array<{
   id: Goal;
@@ -148,6 +159,17 @@ const emptyProfile: ProfileDraft = {
   preferredModuleDifficulty: "intermediate",
   preferredModuleDuration: 30,
 };
+const emptyTargetStandard: TargetStandardDraft = {
+  outcomeType: "job-interview",
+  targetName: "",
+  evaluator: "",
+  jurisdiction: "",
+  targetDate: "",
+  language: "en",
+  format: "",
+  sourceUrl: "",
+  notes: "",
+};
 
 export default function Home() {
   const [goal, setGoal] = useState<Goal | null>(null);
@@ -166,6 +188,8 @@ export default function Home() {
   const [feedback, setFeedback] = useState<JsonFeedback | null>(null);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>(emptyProfile);
+  const [targetStandardDraft, setTargetStandardDraft] =
+    useState<TargetStandardDraft>(emptyTargetStandard);
   const [peerFilters, setPeerFilters] = useState({
     role: "",
     country: "",
@@ -194,6 +218,10 @@ export default function Home() {
 
   const { user, isAuthenticated } = useAuth();
   const progressQuery = trpc.profile.progress.useQuery(undefined, {
+    enabled: isAuthenticated,
+    retry: false,
+  });
+  const targetStandardQuery = trpc.profile.targetStandard.useQuery(undefined, {
     enabled: isAuthenticated,
     retry: false,
   });
@@ -263,6 +291,13 @@ export default function Home() {
   const profileSave = trpc.profile.save.useMutation({
     onSuccess: () => void progressQuery.refetch(),
   });
+  const targetStandardSave = trpc.profile.saveTargetStandard.useMutation({
+    onSuccess: () => {
+      void targetStandardQuery.refetch();
+      toast.success("Target Standard saved");
+    },
+    onError: error => toast.error(error.message),
+  });
   const start = trpc.coach.start.useMutation({
     onSuccess: data => {
       setSession(data);
@@ -314,6 +349,25 @@ export default function Home() {
     }
   }, [progressQuery.data?.profile]);
 
+  useEffect(() => {
+    const standard = targetStandardQuery.data;
+    if (standard) {
+      setTargetStandardDraft({
+        outcomeType: standard.outcomeType,
+        targetName: standard.targetName,
+        evaluator: standard.evaluator || "",
+        jurisdiction: standard.jurisdiction || "",
+        targetDate: standard.targetDate
+          ? new Date(standard.targetDate).toISOString().slice(0, 10)
+          : "",
+        language: standard.language || "en",
+        format: standard.format || "",
+        sourceUrl: standard.sourceUrl || "",
+        notes: standard.notes || "",
+      });
+    }
+  }, [targetStandardQuery.data]);
+
   const selectedGoal = useMemo(
     () => goals.find(item => item.id === goal),
     [goal]
@@ -324,9 +378,33 @@ export default function Home() {
   );
   const updateProfile = (key: keyof ProfileDraft, value: string | number) =>
     setProfileDraft(current => ({ ...current, [key]: value }));
+  const updateTargetStandard = (
+    key: keyof TargetStandardDraft,
+    value: string
+  ) => setTargetStandardDraft(current => ({ ...current, [key]: value }));
 
   function saveProfile() {
     profileSave.mutate(profileDraft);
+  }
+  function saveTargetStandard() {
+    if (!isAuthenticated) {
+      startLogin();
+      return;
+    }
+    if (!targetStandardDraft.targetName.trim()) {
+      toast.error("Add the name of the interview, exam, or assessment first");
+      return;
+    }
+    targetStandardSave.mutate({
+      ...targetStandardDraft,
+      targetName: targetStandardDraft.targetName.trim(),
+      evaluator: targetStandardDraft.evaluator || undefined,
+      jurisdiction: targetStandardDraft.jurisdiction || undefined,
+      targetDate: targetStandardDraft.targetDate || undefined,
+      format: targetStandardDraft.format || undefined,
+      sourceUrl: targetStandardDraft.sourceUrl || undefined,
+      notes: targetStandardDraft.notes || undefined,
+    });
   }
   function acceptModule(module: RecommendedModule) {
     const interviewType: Goal =
@@ -484,7 +562,7 @@ export default function Home() {
       format: "a4",
     });
     pdf.setFontSize(20);
-    pdf.text("Global AI Coach — Filtered Comparison", 36, 38);
+    pdf.text("Atlas Readiness — Filtered Comparison", 36, 38);
     pdf.setFontSize(10);
     pdf.setTextColor(90, 100, 115);
     pdf.text(
@@ -511,7 +589,7 @@ export default function Home() {
     if (!summary) return;
     const pdf = new jsPDF();
     pdf.setFontSize(22);
-    pdf.text("Global AI Coach", 20, 24);
+    pdf.text("Atlas Readiness", 20, 24);
     pdf.setFontSize(16);
     pdf.text("Weekly Progress Summary", 20, 36);
     pdf.setFontSize(11);
@@ -570,7 +648,7 @@ export default function Home() {
       retentionY + 27
     );
     pdf.setTextColor(90, 100, 115);
-    pdf.text("Generated by Global AI Coach", 20, 280);
+    pdf.text("Generated by Atlas Readiness", 20, 280);
     pdf.save(
       `global-ai-coach-weekly-summary-${new Date(summary.weekStart).toISOString().slice(0, 10)}.pdf`
     );
@@ -579,7 +657,7 @@ export default function Home() {
   async function shareWeeklySummary() {
     const summary = weeklySummary.data;
     if (!summary) return;
-    const text = `My Global AI Coach weekly progress: ${summary.attempts} attempts, ${summary.minutesPracticed} minutes practiced, average score ${summary.averageScore}/10.`;
+    const text = `My Atlas Readiness weekly progress: ${summary.attempts} attempts, ${summary.minutesPracticed} minutes practiced, average score ${summary.averageScore}/10.`;
     const share = navigator as Navigator & {
       share?: (data: ShareData) => Promise<void>;
     };
@@ -591,9 +669,9 @@ export default function Home() {
       });
       toast.success("Weekly summary shared");
     } else {
-      window.location.href = `mailto:?subject=${encodeURIComponent("My Global AI Coach progress")}&body=${encodeURIComponent(`${text}
+      window.location.href = `mailto:?subject=${encodeURIComponent("My Atlas Readiness progress")}&body=${encodeURIComponent(`${text}
 
-Open Global AI Coach: ${window.location.href}`)}`;
+Open Atlas Readiness: ${window.location.href}`)}`;
       toast.success("Email composer opened");
     }
   }
@@ -638,7 +716,7 @@ Open Global AI Coach: ${window.location.href}`)}`;
               <Sparkles size={19} />
             </span>
             <span className="font-semibold tracking-tight">
-              Global AI Coach
+              Atlas Readiness
             </span>
           </button>
           <div className="flex items-center gap-3">
@@ -1322,6 +1400,151 @@ Open Global AI Coach: ${window.location.href}`)}`;
     );
   }
 
+  const targetStandardForm = (
+    <Card className="mb-8 overflow-hidden border-slate-200 shadow-sm">
+      <CardHeader className="bg-slate-950 text-white">
+        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+          <div>
+            <CardDescription className="text-lime-300">
+              Step 0 · Define the standard
+            </CardDescription>
+            <CardTitle className="mt-2 text-2xl text-white">
+              What exactly are you preparing to pass?
+            </CardTitle>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+              Atlas uses this context to build the right rubric instead of
+              giving you generic practice.
+            </p>
+          </div>
+          <Badge className="w-fit bg-white/10 text-lime-200 hover:bg-white/10">
+            Readiness Graph
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-6">
+        <div className="grid gap-4 md:grid-cols-3">
+          <label className="text-sm text-slate-600">
+            Outcome type
+            <select
+              value={targetStandardDraft.outcomeType}
+              onChange={e =>
+                updateTargetStandard("outcomeType", e.target.value)
+              }
+              className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-slate-900"
+            >
+              <option value="job-interview">Job interview</option>
+              <option value="exam">School or professional exam</option>
+              <option value="license">License or regulated assessment</option>
+              <option value="promotion">
+                Promotion or internal assessment
+              </option>
+              <option value="other">Other high-stakes goal</option>
+            </select>
+          </label>
+          <label className="text-sm text-slate-600 md:col-span-2">
+            Assessment name <span className="text-rose-500">*</span>
+            <input
+              value={targetStandardDraft.targetName}
+              onChange={e => updateTargetStandard("targetName", e.target.value)}
+              placeholder="e.g. Senior Backend Engineer — final loop"
+              className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-slate-900"
+            />
+          </label>
+          <label className="text-sm text-slate-600">
+            Evaluator or organization
+            <input
+              value={targetStandardDraft.evaluator}
+              onChange={e => updateTargetStandard("evaluator", e.target.value)}
+              placeholder="e.g. Acme, AWS, University"
+              className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-slate-900"
+            />
+          </label>
+          <label className="text-sm text-slate-600">
+            Country or jurisdiction
+            <input
+              value={targetStandardDraft.jurisdiction}
+              onChange={e =>
+                updateTargetStandard("jurisdiction", e.target.value)
+              }
+              placeholder="e.g. Germany, California, Global"
+              className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-slate-900"
+            />
+          </label>
+          <label className="text-sm text-slate-600">
+            Target date
+            <input
+              type="date"
+              value={targetStandardDraft.targetDate}
+              onChange={e => updateTargetStandard("targetDate", e.target.value)}
+              className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-slate-900"
+            />
+          </label>
+          <label className="text-sm text-slate-600">
+            Practice language
+            <select
+              value={targetStandardDraft.language}
+              onChange={e => updateTargetStandard("language", e.target.value)}
+              className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-slate-900"
+            >
+              <option value="en">English</option>
+              <option value="es">Spanish</option>
+              <option value="de">German</option>
+              <option value="fr">French</option>
+              <option value="ar">Arabic</option>
+              <option value="hi">Hindi</option>
+            </select>
+          </label>
+          <label className="text-sm text-slate-600">
+            Assessment format
+            <input
+              value={targetStandardDraft.format}
+              onChange={e => updateTargetStandard("format", e.target.value)}
+              placeholder="e.g. 4 rounds, oral + written"
+              className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-slate-900"
+            />
+          </label>
+          <label className="text-sm text-slate-600 md:col-span-2">
+            Official source or rubric URL
+            <input
+              type="url"
+              value={targetStandardDraft.sourceUrl}
+              onChange={e => updateTargetStandard("sourceUrl", e.target.value)}
+              placeholder="https://…"
+              className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-slate-900"
+            />
+          </label>
+          <label className="text-sm text-slate-600 md:col-span-3">
+            What should Atlas know before it coaches you?
+            <textarea
+              value={targetStandardDraft.notes}
+              onChange={e => updateTargetStandard("notes", e.target.value)}
+              placeholder="Paste requirements, constraints, topics, or anything that changes how you will be evaluated."
+              className="mt-2 min-h-24 w-full rounded-xl border border-slate-200 p-3 text-slate-900"
+            />
+          </label>
+        </div>
+        <div className="mt-5 flex flex-col justify-between gap-3 rounded-2xl bg-lime-50 p-4 sm:flex-row sm:items-center">
+          <p className="text-sm leading-6 text-slate-700">
+            This becomes your current Target Standard. You can update it as the
+            goal changes.
+          </p>
+          <Button
+            onClick={saveTargetStandard}
+            disabled={targetStandardSave.isPending}
+            className="bg-slate-950 text-white hover:bg-slate-800"
+          >
+            {targetStandardSave.isPending
+              ? "Saving…"
+              : isAuthenticated
+                ? "Save my standard"
+                : "Sign in to save"}
+            <ArrowRight size={16} className="ml-2" />
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
   const profileForm = isAuthenticated && (
     <Card className="mb-12 border-slate-200">
       <CardHeader>
@@ -1413,15 +1636,19 @@ Open Global AI Coach: ${window.location.href}`)}`;
     <main className="min-h-screen overflow-hidden bg-[#f6f8fb] text-slate-900">
       <nav className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
         <div className="flex items-center gap-3">
-          <span className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-950 text-lime-300">
-            <Sparkles size={19} />
+          <span className="grid h-10 w-10 place-items-center overflow-hidden rounded-2xl bg-slate-950">
+            <img
+              src="/manus-storage/atlas-readiness-logo_f4afc1d1.png"
+              alt=""
+              className="h-8 w-8 object-contain"
+            />
           </span>
-          <span className="font-semibold tracking-tight">Global AI Coach</span>
+          <span className="font-semibold tracking-tight">Atlas Readiness</span>
         </div>
         <div className="hidden items-center gap-6 text-sm text-slate-600 md:flex">
-          <span>Adaptive training</span>
-          <span>Global context</span>
-          <span>Real-time feedback</span>
+          <span>Know the standard</span>
+          <span>Train the gap</span>
+          <span>Deliver when it counts</span>
         </div>
         <div className="flex items-center gap-3">
           {isAuthenticated && (
@@ -1439,21 +1666,20 @@ Open Global AI Coach: ${window.location.href}`)}`;
             advantage
           </Badge>
           <h1 className="max-w-4xl text-5xl font-semibold leading-[0.98] tracking-[-0.065em] md:text-7xl">
-            Train for the moment that matters.
+            Get ready for the moment that matters.
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-            A personal AI coach for high-stakes interviews, exams, and tasks. It
-            adapts the plan to your deadline, challenges your thinking, and
-            gives you a clear next move.
+            Atlas maps the real evaluation, finds your highest-risk gaps, and
+            gives you the next drill that moves you closer to ready.
           </p>
           <div className="mt-8 flex flex-wrap gap-3 text-sm text-slate-600">
             <span className="flex items-center gap-2">
-              <Check size={16} className="text-emerald-600" /> Emergency to
-              mastery plans
+              <Check size={16} className="text-emerald-600" />{" "}
+              Deadline-calibrated plans
             </span>
             <span className="flex items-center gap-2">
-              <Check size={16} className="text-emerald-600" />{" "}
-              Multilingual-ready
+              <Check size={16} className="text-emerald-600" /> Evidence-based
+              feedback
             </span>
           </div>
         </div>
@@ -1505,6 +1731,7 @@ Open Global AI Coach: ${window.location.href}`)}`;
         </div>
       </section>
       <section className="mx-auto max-w-7xl px-6 pb-16">
+        {targetStandardForm}
         {profileForm}
         <div className="mb-8 flex items-end justify-between gap-4">
           <div>
@@ -1516,7 +1743,8 @@ Open Global AI Coach: ${window.location.href}`)}`;
             </h2>
           </div>
           <p className="hidden max-w-sm text-right text-sm text-slate-600 md:block">
-            Choose the goal and the clock. The system does the calibration.
+            Start with the standard. Atlas will calibrate the goal, the clock,
+            and the next best action.
           </p>
         </div>
         <div className="grid gap-4 md:grid-cols-3">

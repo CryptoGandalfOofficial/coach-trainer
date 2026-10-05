@@ -1,4 +1,12 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, unique, varchar } from "drizzle-orm/mysql-core";
+import {
+  int,
+  mysqlEnum,
+  mysqlTable,
+  text,
+  timestamp,
+  unique,
+  varchar,
+} from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -17,22 +25,53 @@ export type InsertUser = typeof users.$inferInsert;
 
 export const coachProfiles = mysqlTable("coach_profiles", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
-  preferredLanguage: varchar("preferredLanguage", { length: 32 }).default("en").notNull(),
+  userId: int("userId")
+    .notNull()
+    .unique()
+    .references(() => users.id, { onDelete: "cascade" }),
+  preferredLanguage: varchar("preferredLanguage", { length: 32 })
+    .default("en")
+    .notNull(),
   country: varchar("country", { length: 64 }),
   targetRole: varchar("targetRole", { length: 128 }),
   experienceLevel: varchar("experienceLevel", { length: 32 }),
   weeklyMinutes: int("weeklyMinutes"),
-  preferredModuleDifficulty: varchar("preferredModuleDifficulty", { length: 32 }).default("intermediate").notNull(),
+  preferredModuleDifficulty: varchar("preferredModuleDifficulty", {
+    length: 32,
+  })
+    .default("intermediate")
+    .notNull(),
   preferredModuleDuration: int("preferredModuleDuration").default(30).notNull(),
   savedDateRanges: text("savedDateRanges"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export const targetStandards = mysqlTable("target_standards", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId")
+    .notNull()
+    .unique()
+    .references(() => users.id, { onDelete: "cascade" }),
+  outcomeType: varchar("outcomeType", { length: 64 }).notNull(),
+  targetName: varchar("targetName", { length: 160 }).notNull(),
+  evaluator: varchar("evaluator", { length: 160 }),
+  jurisdiction: varchar("jurisdiction", { length: 96 }),
+  targetDate: timestamp("targetDate"),
+  language: varchar("language", { length: 32 }).default("en").notNull(),
+  format: varchar("format", { length: 96 }),
+  sourceUrl: varchar("sourceUrl", { length: 512 }),
+  notes: text("notes"),
+  version: varchar("version", { length: 32 }).default("v1").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
 export const coachingSessions = mysqlTable("coaching_sessions", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  userId: int("userId")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   interviewType: varchar("interviewType", { length: 64 }).notNull(),
   timeline: varchar("timeline", { length: 32 }).notNull(),
   focus: varchar("focus", { length: 160 }).notNull(),
@@ -48,8 +87,12 @@ export const coachingSessions = mysqlTable("coaching_sessions", {
 
 export const practiceAttempts = mysqlTable("practice_attempts", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
-  sessionId: int("sessionId").notNull().references(() => coachingSessions.id, { onDelete: "cascade" }),
+  userId: int("userId")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  sessionId: int("sessionId")
+    .notNull()
+    .references(() => coachingSessions.id, { onDelete: "cascade" }),
   question: text("question").notNull(),
   answer: text("answer").notNull(),
   overallScore: int("overallScore").notNull(),
@@ -65,26 +108,39 @@ export const practiceAttempts = mysqlTable("practice_attempts", {
 export const interactionEvents = mysqlTable("interaction_events", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").references(() => users.id, { onDelete: "set null" }),
-  sessionId: int("sessionId").references(() => coachingSessions.id, { onDelete: "set null" }),
+  sessionId: int("sessionId").references(() => coachingSessions.id, {
+    onDelete: "set null",
+  }),
   eventType: varchar("eventType", { length: 64 }).notNull(),
   path: varchar("path", { length: 64 }).notNull(),
   metadata: text("metadata"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
-export const weeklySummaries = mysqlTable("weekly_summaries", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
-  weekStart: timestamp("weekStart").notNull(),
-  attempts: int("attempts").default(0).notNull(),
-  averageScore: int("averageScore").default(0).notNull(),
-  minutesPracticed: int("minutesPracticed").default(0).notNull(),
-  summaryText: text("summaryText").notNull(),
-  skillTrends: text("skillTrends"),
-  retentionRate: int("retentionRate"),
-  recommendedModules: text("recommendedModules"),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-}, (table) => ({ userWeekUnique: unique("weekly_summaries_user_week_unique").on(table.userId, table.weekStart) }));
+export const weeklySummaries = mysqlTable(
+  "weekly_summaries",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    weekStart: timestamp("weekStart").notNull(),
+    attempts: int("attempts").default(0).notNull(),
+    averageScore: int("averageScore").default(0).notNull(),
+    minutesPracticed: int("minutesPracticed").default(0).notNull(),
+    summaryText: text("summaryText").notNull(),
+    skillTrends: text("skillTrends"),
+    retentionRate: int("retentionRate"),
+    recommendedModules: text("recommendedModules"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => ({
+    userWeekUnique: unique("weekly_summaries_user_week_unique").on(
+      table.userId,
+      table.weekStart
+    ),
+  })
+);
 
 export type CoachProfile = typeof coachProfiles.$inferSelect;
 export type CoachingSession = typeof coachingSessions.$inferSelect;

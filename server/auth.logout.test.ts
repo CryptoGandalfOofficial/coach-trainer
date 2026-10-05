@@ -10,7 +10,10 @@ type CookieCall = {
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 
-function createAuthContext(): { ctx: TrpcContext; clearedCookies: CookieCall[] } {
+function createAuthContext(): {
+  ctx: TrpcContext;
+  clearedCookies: CookieCall[];
+} {
   const clearedCookies: CookieCall[] = [];
 
   const user: AuthenticatedUser = {
@@ -58,5 +61,19 @@ describe("auth.logout", () => {
       httpOnly: true,
       path: "/",
     });
+  });
+});
+
+describe("profile.saveTargetStandard", () => {
+  it("rejects an incomplete target standard before persistence", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(
+      caller.profile.saveTargetStandard({
+        outcomeType: "",
+        targetName: "",
+      })
+    ).rejects.toThrow();
   });
 });
