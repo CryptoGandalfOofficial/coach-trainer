@@ -7,6 +7,8 @@ import {
   interactionEvents,
   practiceAttempts,
   targetStandards,
+  targetStandardVersions,
+  targetSources,
   users,
   weeklySummaries,
   type InsertUser,
@@ -112,6 +114,13 @@ export type TargetStandardInput = {
   format?: string;
   sourceUrl?: string;
   notes?: string;
+  rubricCriteria?: Array<{
+    id: string;
+    label: string;
+    weight: number;
+    targetScore: number;
+  }>;
+  changeNote?: string;
 };
 
 export async function getTargetStandard(userId: number) {
@@ -131,6 +140,39 @@ export async function upsertTargetStandard(
 ) {
   const db = await getDb();
   if (!db) return null;
+  const existing = await getTargetStandard(userId);
+  const currentVersion = existing
+    ? Number.parseInt(existing.version.replace(/^v/, ""), 10) || 1
+    : 0;
+  const nextVersion = currentVersion + 1;
+  const rubricCriteria = input.rubricCriteria?.length
+    ? input.rubricCriteria
+    : [
+        {
+          id: "clarity",
+          label: "Clarity and structure",
+          weight: 25,
+          targetScore: 8,
+        },
+        {
+          id: "evidence",
+          label: "Evidence and correctness",
+          weight: 30,
+          targetScore: 8,
+        },
+        {
+          id: "judgment",
+          label: "Judgment and trade-offs",
+          weight: 25,
+          targetScore: 8,
+        },
+        {
+          id: "communication",
+          label: "Communication under pressure",
+          weight: 20,
+          targetScore: 8,
+        },
+      ];
   const values = {
     userId,
     outcomeType: input.outcomeType,
@@ -144,7 +186,9 @@ export async function upsertTargetStandard(
     format: input.format || null,
     sourceUrl: input.sourceUrl || null,
     notes: input.notes || null,
-    version: "v1",
+    version: `v${nextVersion}`,
+    rubricCriteria: JSON.stringify(rubricCriteria),
+    reviewStatus: existing?.reviewStatus || "draft",
   };
   const { userId: _userId, ...updateValues } = values;
   await db
@@ -153,7 +197,207 @@ export async function upsertTargetStandard(
     .onDuplicateKeyUpdate({
       set: { ...updateValues, updatedAt: new Date() },
     });
-  return getTargetStandard(userId);
+  const saved = await getTargetStandard(userId);
+  if (saved) {
+    await db.insert(targetStandardVersions).values({
+      targetStandardId: saved.id,
+      versionNumber: nextVersion,
+      snapshot: JSON.stringify({
+        ...saved,
+        targetDate: saved.targetDate?.toISOString() || null,
+      }),
+      changeNote:
+        input.changeNote ||
+        (existing ? "Target Standard updated" : "Initial Target Standard"),
+    });
+  }
+  return saved;
+}
+
+export async function getTargetStandardVersions(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const standard = await getTargetStandard(userId);
+  if (!standard) return [];
+  return db
+    .select()
+    .from(targetStandardVersions)
+    .where(eq(targetStandardVersions.targetStandardId, standard.id))
+    .orderBy(desc(targetStandardVersions.versionNumber));
+}
+
+export async function getTargetSources(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const standard = await getTargetStandard(userId);
+  if (!standard) return [];
+  return db
+    .select()
+    .from(targetSources)
+    .where(eq(targetSources.targetStandardId, standard.id))
+    .orderBy(desc(targetSources.createdAt));
+}
+
+export async function ingestTargetSource(
+  userId: number,
+  input: { url: string; jurisdiction?: string; sourceType?: string }
+) {
+  const db = await getDb();
+  if (!db) return null;
+  const standard = await getTargetStandard(userId);
+  if (!standard)
+    throw new Error("Save a Target Standard before adding sources");
+  const parsed = new URL(input.url);
+  if (
+    !["http:", "https:"].includes(parsed.protocol) ||
+    /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(parsed.hostname)
+  ) {
+    throw new Error("Only public HTTP(S) source URLs are allowed");
+  }
+  const response = await fetch(parsed.toString(), {
+    signal: AbortSignal.timeout(8000),
+    headers: { Accept: "text/html,text/plain" },
+  });
+  if (!response.ok) throw new Error(`Source returned ${response.status}`);
+  const raw = (await response.text()).slice(0, 20000);
+  const title =
+    raw
+      .match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]
+      ?.replace(/\s+/g, " ")
+      .trim() || parsed.hostname;
+  const excerpt = raw
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 4000);
+  await db.insert(targetSources).values({
+    targetStandardId: standard.id,
+    jurisdiction: input.jurisdiction || standard.jurisdiction || null,
+    url: parsed.toString(),
+    title,
+    publisher: parsed.hostname,
+    sourceType: input.sourceType || "official",
+    contentExcerpt: excerpt,
+    status: "pending_review",
+    fetchedAt: new Date(),
+  });
+  const sources = await getTargetSources(userId);
+  return sources[0] || null;
+}
+
+export async function reviewTargetSource(
+  userId: number,
+  sourceId: number,
+  status: "approved" | "rejected",
+  reviewNotes?: string
+) {
+  const db = await getDb();
+  if (!db) return null;
+  const standard = await getTargetStandard(userId);
+  if (!standard) return null;
+  await db
+    .update(targetSources)
+    .set({
+      status,
+      reviewNotes: reviewNotes || null,
+      reviewedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(targetSources.id, sourceId),
+        eq(targetSources.targetStandardId, standard.id)
+      )
+    );
+  await db
+    .update(targetStandards)
+    .set({
+      reviewStatus: status === "approved" ? "reviewed" : "draft",
+      lastReviewedAt: status === "approved" ? new Date() : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(targetStandards.id, standard.id));
+  const sources = await getTargetSources(userId);
+  return sources.find(source => source.id === sourceId) || null;
+}
+
+export async function getReadinessScore(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const standard = await getTargetStandard(userId);
+  if (!standard) return null;
+  const attempts = await db
+    .select()
+    .from(practiceAttempts)
+    .where(eq(practiceAttempts.userId, userId))
+    .limit(10000);
+  let criteria: Array<{
+    id: string;
+    label: string;
+    weight: number;
+    targetScore: number;
+  }> = [];
+  try {
+    criteria = JSON.parse(standard.rubricCriteria || "[]") as typeof criteria;
+  } catch {
+    criteria = [];
+  }
+  const overall = attempts.length
+    ? attempts.reduce((sum, attempt) => sum + attempt.overallScore, 0) /
+      attempts.length
+    : 0;
+  const metricFor = (criterion: { id: string }) => {
+    const values = attempts.map(attempt => {
+      if (criterion.id === "communication")
+        return attempt.communicationScore ?? attempt.overallScore;
+      if (criterion.id === "judgment")
+        return attempt.confidenceScore ?? attempt.overallScore;
+      if (criterion.id === "evidence")
+        return attempt.technicalScore ?? attempt.overallScore;
+      return attempt.overallScore;
+    });
+    return values.length
+      ? values.reduce((sum, score) => sum + score, 0) / values.length
+      : 0;
+  };
+  const breakdown = criteria.map(criterion => {
+    const score = metricFor(criterion);
+    const target = criterion.targetScore || 8;
+    const readiness = Math.min(100, Math.round((score / target) * 100));
+    return {
+      ...criterion,
+      score: Math.round(score * 10) / 10,
+      readiness,
+      evidenceCount: attempts.length,
+      status: score >= target ? "ready" : score >= target - 2 ? "close" : "gap",
+    };
+  });
+  const totalWeight = criteria.reduce(
+    (sum, criterion) => sum + Math.max(0, criterion.weight || 0),
+    0
+  );
+  const weighted = totalWeight
+    ? criteria.reduce(
+        (sum, criterion, index) =>
+          sum +
+          ((breakdown[index]?.readiness || 0) *
+            Math.max(0, criterion.weight || 0)) /
+            totalWeight,
+        0
+      )
+    : 0;
+  return {
+    targetStandardId: standard.id,
+    version: standard.version,
+    score: Math.round(weighted),
+    overallPracticeScore: Math.round(overall * 10) / 10,
+    attempts: attempts.length,
+    confidence:
+      attempts.length >= 10 ? "high" : attempts.length >= 3 ? "medium" : "low",
+    breakdown,
+  };
 }
 
 export type SavedDateRange = {

@@ -63,6 +63,43 @@ export const targetStandards = mysqlTable("target_standards", {
   sourceUrl: varchar("sourceUrl", { length: 512 }),
   notes: text("notes"),
   version: varchar("version", { length: 32 }).default("v1").notNull(),
+  rubricCriteria: text("rubricCriteria").notNull(),
+  reviewStatus: varchar("reviewStatus", { length: 32 })
+    .default("draft")
+    .notNull(),
+  lastReviewedAt: timestamp("lastReviewedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const targetStandardVersions = mysqlTable("target_standard_versions", {
+  id: int("id").autoincrement().primaryKey(),
+  targetStandardId: int("targetStandardId")
+    .notNull()
+    .references(() => targetStandards.id, { onDelete: "cascade" }),
+  versionNumber: int("versionNumber").notNull(),
+  snapshot: text("snapshot").notNull(),
+  changeNote: varchar("changeNote", { length: 512 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const targetSources = mysqlTable("target_sources", {
+  id: int("id").autoincrement().primaryKey(),
+  targetStandardId: int("targetStandardId")
+    .notNull()
+    .references(() => targetStandards.id, { onDelete: "cascade" }),
+  jurisdiction: varchar("jurisdiction", { length: 96 }),
+  url: varchar("url", { length: 512 }).notNull(),
+  title: varchar("title", { length: 240 }),
+  publisher: varchar("publisher", { length: 160 }),
+  sourceType: varchar("sourceType", { length: 64 })
+    .default("official")
+    .notNull(),
+  contentExcerpt: text("contentExcerpt"),
+  status: varchar("status", { length: 32 }).default("pending_review").notNull(),
+  reviewNotes: varchar("reviewNotes", { length: 512 }),
+  fetchedAt: timestamp("fetchedAt"),
+  reviewedAt: timestamp("reviewedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

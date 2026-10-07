@@ -17,13 +17,18 @@ import {
   getCoachProfile,
   getLatestWeeklySummary,
   getSavedDateRanges,
+  getReadinessScore,
   getTargetStandard,
+  getTargetSources,
+  getTargetStandardVersions,
   getUserProgress,
   getWeeklyComparison,
   recordInteraction,
   recordPracticeAttempt,
   saveDateRange,
   updateDateRange,
+  ingestTargetSource,
+  reviewTargetSource,
   upsertCoachProfile,
   upsertTargetStandard,
 } from "./db";
@@ -194,8 +199,28 @@ function guidance(
   const jurisdiction = profile?.country
     ? `Use examples and norms appropriate for ${profile.country}; do not provide legal advice or assume one jurisdiction's rules apply globally.`
     : "Ask clarifying questions before making jurisdiction-specific assumptions.";
+  let standardRubric = "Use the saved Target Standard criteria when available.";
+  if (standard?.rubricCriteria) {
+    try {
+      const criteria = JSON.parse(standard.rubricCriteria) as Array<{
+        label?: string;
+        weight?: number;
+        targetScore?: number;
+      }>;
+      if (criteria.length) {
+        standardRubric = criteria
+          .map(
+            item =>
+              `${item.label || "Criterion"} (${item.weight || 0}% weight, target ${item.targetScore || 8}/10)`
+          )
+          .join("; ");
+      }
+    } catch {
+      standardRubric = "Use the saved Target Standard criteria when available.";
+    }
+  }
   const standardContext = standard?.targetName
-    ? `Target Standard: ${standard.targetName}. Evaluator: ${standard.evaluator || "not specified"}. Jurisdiction: ${standard.jurisdiction || "not specified"}. Format: ${standard.format || "not specified"}. Notes: ${standard.notes || "none"}.`
+    ? `Target Standard: ${standard.targetName}. Evaluator: ${standard.evaluator || "not specified"}. Jurisdiction: ${standard.jurisdiction || "not specified"}. Format: ${standard.format || "not specified"}. Criteria: ${standardRubric}. Notes: ${standard.notes || "none"}.`
     : "No Target Standard has been saved yet; ask for missing evaluation context before making precise claims.";
   return {
     language: profile?.preferredLanguage || "en",
@@ -505,9 +530,55 @@ export const appRouter = router({
           format: z.string().max(96).optional(),
           sourceUrl: z.string().url().max(512).optional().or(z.literal("")),
           notes: z.string().max(2000).optional(),
+          rubricCriteria: z
+            .array(
+              z.object({
+                id: z.string().min(1).max(64),
+                label: z.string().min(1).max(160),
+                weight: z.number().min(0).max(100),
+                targetScore: z.number().min(1).max(10),
+              })
+            )
+            .max(20)
+            .optional(),
+          changeNote: z.string().max(512).optional(),
         })
       )
       .mutation(({ ctx, input }) => upsertTargetStandard(ctx.user.id, input)),
+    targetStandardVersions: protectedProcedure.query(({ ctx }) =>
+      getTargetStandardVersions(ctx.user.id)
+    ),
+    targetSources: protectedProcedure.query(({ ctx }) =>
+      getTargetSources(ctx.user.id)
+    ),
+    ingestTargetSource: protectedProcedure
+      .input(
+        z.object({
+          url: z.string().url().max(512),
+          jurisdiction: z.string().max(96).optional(),
+          sourceType: z.string().max(64).optional(),
+        })
+      )
+      .mutation(({ ctx, input }) => ingestTargetSource(ctx.user.id, input)),
+    reviewTargetSource: protectedProcedure
+      .input(
+        z.object({
+          sourceId: z.number().int().positive(),
+          status: z.enum(["approved", "rejected"]),
+          reviewNotes: z.string().max(512).optional(),
+        })
+      )
+      .mutation(({ ctx, input }) =>
+        reviewTargetSource(
+          ctx.user.id,
+          input.sourceId,
+          input.status,
+          input.reviewNotes
+        )
+      ),
+    readinessScore: protectedProcedure.query(({ ctx }) =>
+      getReadinessScore(ctx.user.id)
+    ),
   }),
   coach: router({
     start: protectedProcedure

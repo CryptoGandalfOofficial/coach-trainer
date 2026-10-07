@@ -225,6 +225,18 @@ export default function Home() {
     enabled: isAuthenticated,
     retry: false,
   });
+  const targetStandardVersions = trpc.profile.targetStandardVersions.useQuery(
+    undefined,
+    { enabled: isAuthenticated, retry: false }
+  );
+  const targetSources = trpc.profile.targetSources.useQuery(undefined, {
+    enabled: isAuthenticated,
+    retry: false,
+  });
+  const readinessScore = trpc.profile.readinessScore.useQuery(undefined, {
+    enabled: isAuthenticated,
+    retry: false,
+  });
   const weeklySummary = trpc.profile.weeklySummary.useQuery(undefined, {
     enabled: isAuthenticated,
     retry: false,
@@ -294,7 +306,23 @@ export default function Home() {
   const targetStandardSave = trpc.profile.saveTargetStandard.useMutation({
     onSuccess: () => {
       void targetStandardQuery.refetch();
+      void targetStandardVersions.refetch();
+      void readinessScore.refetch();
       toast.success("Target Standard saved");
+    },
+    onError: error => toast.error(error.message),
+  });
+  const ingestSource = trpc.profile.ingestTargetSource.useMutation({
+    onSuccess: () => {
+      void targetSources.refetch();
+      toast.success("Official source captured for review");
+    },
+    onError: error => toast.error(error.message),
+  });
+  const reviewSource = trpc.profile.reviewTargetSource.useMutation({
+    onSuccess: () => {
+      void targetSources.refetch();
+      toast.success("Source review updated");
     },
     onError: error => toast.error(error.message),
   });
@@ -404,6 +432,18 @@ export default function Home() {
       format: targetStandardDraft.format || undefined,
       sourceUrl: targetStandardDraft.sourceUrl || undefined,
       notes: targetStandardDraft.notes || undefined,
+      changeNote: "Updated from the Target Standard intake",
+    });
+  }
+  function captureOfficialSource() {
+    if (!targetStandardDraft.sourceUrl.trim()) {
+      toast.error("Add an official source URL first");
+      return;
+    }
+    ingestSource.mutate({
+      url: targetStandardDraft.sourceUrl.trim(),
+      jurisdiction: targetStandardDraft.jurisdiction || undefined,
+      sourceType: "official",
     });
   }
   function acceptModule(module: RecommendedModule) {
@@ -1545,6 +1585,200 @@ Open Atlas Readiness: ${window.location.href}`)}`;
     </Card>
   );
 
+  const readinessAndEvidence = isAuthenticated && (
+    <div className="mb-12 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <CardDescription>
+                <TrendingUp size={15} className="mr-2 inline" /> Readiness Graph
+              </CardDescription>
+              <CardTitle>Evidence against your standard</CardTitle>
+            </div>
+            {readinessScore.data && (
+              <div className="text-right">
+                <div className="text-3xl font-semibold text-slate-950">
+                  {readinessScore.data.score}%
+                </div>
+                <div className="text-xs text-slate-500">
+                  {readinessScore.data.confidence} confidence
+                </div>
+              </div>
+            )}
+          </div>
+          <p className="text-sm leading-6 text-slate-600">
+            Atlas compares scored practice evidence with the weighted criteria
+            in your current Target Standard. It is a coaching signal, not a
+            guarantee of an external result.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {!readinessScore.data ? (
+            <div className="rounded-2xl bg-slate-50 p-5 text-sm text-slate-600">
+              Save a Target Standard and complete a few drills to see evidence-
+              based readiness.
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {readinessScore.data.breakdown.map(item => (
+                <div key={item.id}>
+                  <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+                    <span className="font-medium text-slate-800">
+                      {item.label}
+                    </span>
+                    <span className="text-slate-500">
+                      {item.score}/10 ·{" "}
+                      {item.status === "ready"
+                        ? "Ready"
+                        : item.status === "close"
+                          ? "Close"
+                          : "Gap"}
+                    </span>
+                  </div>
+                  <Progress value={item.readiness} />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Weight {item.weight}% · {item.evidenceCount} practice
+                    attempts
+                  </p>
+                </div>
+              ))}
+              <div className="flex flex-wrap gap-2 pt-1 text-xs text-slate-500">
+                <Badge variant="secondary">
+                  Version {readinessScore.data.version}
+                </Badge>
+                <Badge variant="secondary">
+                  {readinessScore.data.attempts} attempts
+                </Badge>
+                <Badge variant="secondary">
+                  Practice average {readinessScore.data.overallPracticeScore}/10
+                </Badge>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader>
+          <CardDescription>
+            <Globe2 size={15} className="mr-2 inline" /> Source room
+          </CardDescription>
+          <CardTitle>Review the official context</CardTitle>
+          <p className="text-sm leading-6 text-slate-600">
+            Capture a public source, inspect the excerpt, then approve it before
+            Atlas treats it as trusted context.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <Button
+            variant="outline"
+            className="mb-4 w-full"
+            onClick={captureOfficialSource}
+            disabled={ingestSource.isPending}
+          >
+            {ingestSource.isPending
+              ? "Capturing source…"
+              : "Capture URL for review"}
+          </Button>
+          <div className="space-y-3">
+            {!targetSources.data?.length ? (
+              <p className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">
+                No sources captured yet.
+              </p>
+            ) : (
+              targetSources.data.map(source => (
+                <div
+                  key={source.id}
+                  className="rounded-2xl border border-slate-200 p-4"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-slate-900">
+                        {source.title || source.publisher || source.url}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {source.jurisdiction || "Global"} ·{" "}
+                        {source.status.replace("_", " ")}
+                      </p>
+                    </div>
+                    <Badge variant="secondary">{source.sourceType}</Badge>
+                  </div>
+                  {source.contentExcerpt && (
+                    <p className="mt-3 line-clamp-3 text-xs leading-5 text-slate-600">
+                      {source.contentExcerpt}
+                    </p>
+                  )}
+                  {source.status === "pending_review" && (
+                    <div className="mt-3 flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() =>
+                          reviewSource.mutate({
+                            sourceId: source.id,
+                            status: "approved",
+                          })
+                        }
+                        disabled={reviewSource.isPending}
+                      >
+                        Approve
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          reviewSource.mutate({
+                            sourceId: source.id,
+                            status: "rejected",
+                          })
+                        }
+                        disabled={reviewSource.isPending}
+                      >
+                        Reject
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200 shadow-sm lg:col-span-2">
+        <CardHeader>
+          <CardDescription>
+            <RotateCcw size={15} className="mr-2 inline" /> Change history
+          </CardDescription>
+          <CardTitle>Rubric snapshots</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!targetStandardVersions.data?.length ? (
+            <p className="text-sm text-slate-500">
+              Your first snapshot will appear after saving the standard.
+            </p>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-3">
+              {targetStandardVersions.data.slice(0, 6).map(version => (
+                <div key={version.id} className="rounded-2xl bg-slate-50 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <Badge>v{version.versionNumber}</Badge>
+                    <span className="text-xs text-slate-500">
+                      {new Date(version.createdAt).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <p className="mt-3 text-sm text-slate-700">
+                    {version.changeNote || "Target Standard snapshot"}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+
   const profileForm = isAuthenticated && (
     <Card className="mb-12 border-slate-200">
       <CardHeader>
@@ -1732,6 +1966,7 @@ Open Atlas Readiness: ${window.location.href}`)}`;
       </section>
       <section className="mx-auto max-w-7xl px-6 pb-16">
         {targetStandardForm}
+        {readinessAndEvidence}
         {profileForm}
         <div className="mb-8 flex items-end justify-between gap-4">
           <div>

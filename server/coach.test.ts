@@ -5,163 +5,201 @@ vi.mock("./db", () => ({
   createWeeklySummaries: vi
     .fn()
     .mockResolvedValue({ created: 4, weekStart: new Date("2026-09-20") }),
-  createWeeklySummaryForUser: vi
-    .fn()
-    .mockResolvedValue({
-      summaryText: "You completed 2 practices.",
-      attempts: 2,
-      averageScore: 8,
-      minutesPracticed: 30,
-      skillTrends: JSON.stringify([
-        { skill: "tech-interview", score: 8, attempts: 2 },
-      ]),
-      recommendedModules: JSON.stringify([
-        {
-          title: "Algorithm fluency sprint",
-          score: 8,
-          reason: "Build speed.",
-          action: "Complete two timed problems.",
-        },
-      ]),
-      retentionRate: 100,
-    }),
-  getAnalyticsSummary: vi
-    .fn()
-    .mockResolvedValue({
-      totalEvents: 12,
-      uniqueUsers: 4,
-      byPath: [],
-      byEvent: [],
-      completionRate: 50,
-      retentionCohorts: [
-        {
-          cohort: "2026-09-01",
-          users: 4,
-          weeks: [{ week: 0, retained: 4, rate: 100 }],
-        },
-      ],
-      skillTrends: [
-        {
-          skill: "tech-interview",
-          week: "2026-09-01",
-          attempts: 3,
-          overall: 7,
-          communication: 7,
-          confidence: 6,
-          technical: 8,
-          timeManagement: 7,
-        },
-      ],
-      coachQuality: [
-        {
-          coachType: "ai",
-          attempts: 3,
-          overall: 7,
-          communication: 7,
-          confidence: 6,
-          technical: 8,
-          timeManagement: 7,
-        },
-      ],
-    }),
-  getCoachProfile: vi
-    .fn()
-    .mockResolvedValue({
-      preferredLanguage: "de",
-      country: "Germany",
-      targetRole: "Staff engineer",
-      experienceLevel: "advanced",
-      weeklyMinutes: 480,
-      preferredModuleDifficulty: "advanced",
-      preferredModuleDuration: 45,
-    }),
+  createWeeklySummaryForUser: vi.fn().mockResolvedValue({
+    summaryText: "You completed 2 practices.",
+    attempts: 2,
+    averageScore: 8,
+    minutesPracticed: 30,
+    skillTrends: JSON.stringify([
+      { skill: "tech-interview", score: 8, attempts: 2 },
+    ]),
+    recommendedModules: JSON.stringify([
+      {
+        title: "Algorithm fluency sprint",
+        score: 8,
+        reason: "Build speed.",
+        action: "Complete two timed problems.",
+      },
+    ]),
+    retentionRate: 100,
+  }),
+  getAnalyticsSummary: vi.fn().mockResolvedValue({
+    totalEvents: 12,
+    uniqueUsers: 4,
+    byPath: [],
+    byEvent: [],
+    completionRate: 50,
+    retentionCohorts: [
+      {
+        cohort: "2026-09-01",
+        users: 4,
+        weeks: [{ week: 0, retained: 4, rate: 100 }],
+      },
+    ],
+    skillTrends: [
+      {
+        skill: "tech-interview",
+        week: "2026-09-01",
+        attempts: 3,
+        overall: 7,
+        communication: 7,
+        confidence: 6,
+        technical: 8,
+        timeManagement: 7,
+      },
+    ],
+    coachQuality: [
+      {
+        coachType: "ai",
+        attempts: 3,
+        overall: 7,
+        communication: 7,
+        confidence: 6,
+        technical: 8,
+        timeManagement: 7,
+      },
+    ],
+  }),
+  getCoachProfile: vi.fn().mockResolvedValue({
+    preferredLanguage: "de",
+    country: "Germany",
+    targetRole: "Staff engineer",
+    experienceLevel: "advanced",
+    weeklyMinutes: 480,
+    preferredModuleDifficulty: "advanced",
+    preferredModuleDuration: 45,
+  }),
   getTargetStandard: vi.fn().mockResolvedValue(null),
-  getLatestWeeklySummary: vi
-    .fn()
-    .mockResolvedValue({
-      summaryText: "You completed 2 practices.",
-      attempts: 2,
-      averageScore: 8,
-      minutesPracticed: 30,
-      skillTrends: JSON.stringify([
-        { skill: "tech-interview", score: 8, attempts: 2 },
-      ]),
-      retentionRate: 100,
-    }),
-  getSavedDateRanges: vi
+  getTargetStandardVersions: vi
     .fn()
     .mockResolvedValue([
       {
-        name: "Interview sprint",
-        startDate: "2026-09-01",
-        endDate: "2026-09-23",
+        id: 1,
+        targetStandardId: 1,
+        versionNumber: 1,
+        snapshot: "{}",
+        changeNote: "Initial Target Standard",
+        createdAt: new Date(),
       },
     ]),
-  getWeeklyComparison: vi
+  getTargetSources: vi
+    .fn()
+    .mockResolvedValue([
+      {
+        id: 1,
+        targetStandardId: 1,
+        url: "https://example.com/rubric",
+        status: "pending_review",
+      },
+    ]),
+  getReadinessScore: vi.fn().mockResolvedValue({
+    targetStandardId: 1,
+    version: "v1",
+    score: 62,
+    overallPracticeScore: 5,
+    attempts: 2,
+    confidence: "low",
+    breakdown: [
+      {
+        id: "clarity",
+        label: "Clarity and structure",
+        weight: 25,
+        targetScore: 8,
+        score: 5,
+        readiness: 63,
+        evidenceCount: 2,
+        status: "gap",
+      },
+    ],
+  }),
+  ingestTargetSource: vi
     .fn()
     .mockResolvedValue({
-      current: { averageScore: 8, minutesPracticed: 30 },
-      previousWeeks: [{ averageScore: 7, minutesPracticed: 20 }],
-      trendSeries: [
-        {
-          weekStart: new Date("2026-09-20"),
-          skillTrends: JSON.stringify([
-            { skill: "tech-interview", score: 8, attempts: 2 },
-          ]),
-        },
-      ],
-      peerAverageScore: 6.5,
-      peerAverageMinutes: 25,
-      peerCount: 3,
-      peerAverageBySkill: [
-        {
-          skill: "tech-interview",
-          score: 6.5,
-          attempts: 4,
-          sampleSize: 1,
-          confidence: "low",
-        },
-      ],
+      id: 1,
+      status: "pending_review",
+      url: "https://example.com/rubric",
     }),
-  getUserProgress: vi
+  reviewTargetSource: vi
     .fn()
     .mockResolvedValue({
-      profile: undefined,
-      sessions: [],
-      attempts: [],
-      totals: { sessions: 0, attempts: 0, averageScore: 0 },
+      id: 1,
+      status: "approved",
+      url: "https://example.com/rubric",
     }),
+  getLatestWeeklySummary: vi.fn().mockResolvedValue({
+    summaryText: "You completed 2 practices.",
+    attempts: 2,
+    averageScore: 8,
+    minutesPracticed: 30,
+    skillTrends: JSON.stringify([
+      { skill: "tech-interview", score: 8, attempts: 2 },
+    ]),
+    retentionRate: 100,
+  }),
+  getSavedDateRanges: vi.fn().mockResolvedValue([
+    {
+      name: "Interview sprint",
+      startDate: "2026-09-01",
+      endDate: "2026-09-23",
+    },
+  ]),
+  getWeeklyComparison: vi.fn().mockResolvedValue({
+    current: { averageScore: 8, minutesPracticed: 30 },
+    previousWeeks: [{ averageScore: 7, minutesPracticed: 20 }],
+    trendSeries: [
+      {
+        weekStart: new Date("2026-09-20"),
+        skillTrends: JSON.stringify([
+          { skill: "tech-interview", score: 8, attempts: 2 },
+        ]),
+      },
+    ],
+    peerAverageScore: 6.5,
+    peerAverageMinutes: 25,
+    peerCount: 3,
+    peerAverageBySkill: [
+      {
+        skill: "tech-interview",
+        score: 6.5,
+        attempts: 4,
+        sampleSize: 1,
+        confidence: "low",
+      },
+    ],
+  }),
+  getUserProgress: vi.fn().mockResolvedValue({
+    profile: undefined,
+    sessions: [],
+    attempts: [],
+    totals: { sessions: 0, attempts: 0, averageScore: 0 },
+  }),
   recordInteraction: vi.fn().mockResolvedValue(undefined),
   recordPracticeAttempt: vi.fn().mockResolvedValue(undefined),
   upsertCoachProfile: vi.fn().mockResolvedValue(undefined),
-  upsertTargetStandard: vi
-    .fn()
-    .mockImplementation(async (_userId, input) => ({
-      id: 1,
-      userId: 42,
-      ...input,
-      evaluator: input.evaluator || null,
-      jurisdiction: input.jurisdiction || null,
-      targetDate: input.targetDate
-        ? new Date(`${input.targetDate}T00:00:00.000Z`)
-        : null,
-      language: input.language || "en",
-      format: input.format || null,
-      sourceUrl: input.sourceUrl || null,
-      notes: input.notes || null,
-      version: "v1",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    })),
-  saveDateRange: vi
-    .fn()
-    .mockResolvedValue([
-      {
-        name: "Interview sprint",
-        startDate: "2026-09-01",
-        endDate: "2026-09-23",
-      },
-    ]),
+  upsertTargetStandard: vi.fn().mockImplementation(async (_userId, input) => ({
+    id: 1,
+    userId: 42,
+    ...input,
+    evaluator: input.evaluator || null,
+    jurisdiction: input.jurisdiction || null,
+    targetDate: input.targetDate
+      ? new Date(`${input.targetDate}T00:00:00.000Z`)
+      : null,
+    language: input.language || "en",
+    format: input.format || null,
+    sourceUrl: input.sourceUrl || null,
+    notes: input.notes || null,
+    version: "v1",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  })),
+  saveDateRange: vi.fn().mockResolvedValue([
+    {
+      name: "Interview sprint",
+      startDate: "2026-09-01",
+      endDate: "2026-09-23",
+    },
+  ]),
   updateDateRange: vi
     .fn()
     .mockResolvedValue([
@@ -235,6 +273,21 @@ describe("Global AI Coach procedures", () => {
     });
     expect(result?.targetName).toBe("Senior Backend Engineer final loop");
     expect(result?.jurisdiction).toBe("Germany");
+  });
+
+  it("exposes Target Standard history, source review, and readiness evidence", async () => {
+    const history = await caller().profile.targetStandardVersions();
+    const sources = await caller().profile.targetSources();
+    const readiness = await caller().profile.readinessScore();
+    const reviewed = await caller().profile.reviewTargetSource({
+      sourceId: 1,
+      status: "approved",
+      reviewNotes: "Publisher and jurisdiction verified.",
+    });
+    expect(history[0]?.versionNumber).toBe(1);
+    expect(sources[0]?.status).toBe("pending_review");
+    expect(readiness?.score).toBe(62);
+    expect(reviewed?.status).toBe("approved");
   });
 
   it("returns a useful question through the fallback path without an API key", async () => {
