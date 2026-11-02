@@ -237,6 +237,10 @@ export default function Home() {
     enabled: isAuthenticated,
     retry: false,
   });
+  const readinessHistory = trpc.profile.readinessScoreHistory.useQuery(
+    undefined,
+    { enabled: isAuthenticated, retry: false }
+  );
   const weeklySummary = trpc.profile.weeklySummary.useQuery(undefined, {
     enabled: isAuthenticated,
     retry: false,
@@ -308,6 +312,7 @@ export default function Home() {
       void targetStandardQuery.refetch();
       void targetStandardVersions.refetch();
       void readinessScore.refetch();
+      void readinessHistory.refetch();
       toast.success("Target Standard saved");
     },
     onError: error => toast.error(error.message),
@@ -1656,6 +1661,73 @@ Open Atlas Readiness: ${window.location.href}`)}`;
               </div>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader>
+          <CardDescription>Forecast & next drills</CardDescription>
+          <CardTitle>Turn evidence into a plan</CardTitle>
+          <p className="text-sm leading-6 text-slate-600">
+            Forecasts are directional planning signals; they never guarantee an
+            external outcome.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {readinessScore.data?.forecast ? (
+            <div className="rounded-2xl bg-slate-950 p-4 text-white">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm text-slate-300">Target-date outlook</span>
+                <Badge className="bg-white/15 text-white">
+                  {readinessScore.data.forecast.status}
+                </Badge>
+              </div>
+              <p className="mt-2 text-2xl font-semibold">
+                {readinessScore.data.forecast.daysRemaining} days remaining
+              </p>
+              <p className="mt-1 text-xs text-slate-300">
+                Estimated {readinessScore.data.forecast.estimatedWeeks} weeks to
+                reach the 80% planning threshold at the current practice pace.
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
+              Add a target date to unlock a readiness forecast.
+            </div>
+          )}
+          <div>
+            <p className="mb-3 text-sm font-semibold text-slate-900">
+              Criterion → practice module mapping
+            </p>
+            <div className="space-y-2">
+              {(readinessScore.data?.modules || []).slice(0, 4).map((module, index) => {
+                const item = module as { title?: string; skill?: string; durationMinutes?: number };
+                return (
+                  <div key={`${item.title || "module"}-${index}`} className="rounded-xl border border-slate-200 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium text-slate-800">{item.title || "Targeted practice drill"}</span>
+                      <Badge variant="secondary">{item.durationMinutes || 30} min</Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">Focus: {item.skill || "criterion gap"}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <p className="mb-3 text-sm font-semibold text-slate-900">Score history</p>
+            {readinessHistory.data?.length ? (
+              <div className="flex h-20 items-end gap-1" aria-label="Readiness score history">
+                {readinessHistory.data.slice(0, 12).reverse().map(point => (
+                  <div key={point.id} className="group flex min-w-0 flex-1 flex-col justify-end">
+                    <div className="rounded-t bg-sky-500" style={{ height: `${Math.max(8, point.score)}%` }} title={`${point.score}%`} />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500">Complete a drill to begin your trend.</p>
+            )}
+          </div>
         </CardContent>
       </Card>
 

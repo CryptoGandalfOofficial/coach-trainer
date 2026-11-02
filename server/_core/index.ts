@@ -8,7 +8,10 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { weeklySummariesHandler } from "../scheduled";
+import {
+  targetSourceRefreshHandler,
+  weeklySummariesHandler,
+} from "../scheduled";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -38,6 +41,7 @@ async function startServer() {
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   app.post("/api/scheduled/weeklySummaries", weeklySummariesHandler);
+  app.post("/api/scheduled/targetSourceRefresh", targetSourceRefreshHandler);
   // tRPC API
   app.use(
     "/api/trpc",

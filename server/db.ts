@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { ENV } from "./_core/env";
@@ -9,6 +10,7 @@ import {
   targetStandards,
   targetStandardVersions,
   targetSources,
+  readinessScoreHistory,
   users,
   weeklySummaries,
   type InsertUser,
@@ -123,6 +125,24 @@ export type TargetStandardInput = {
   changeNote?: string;
 };
 
+const moduleForCriterion = (criterion: { id: string; label: string }) => {
+  const catalog: Record<string, { title: string; drill: string; duration: number }> = {
+    clarity: { title: "Structured response lab", drill: "Answer with a clear claim, three supporting points, and a concise close.", duration: 20 },
+    evidence: { title: "Evidence and correctness sprint", drill: "Complete one timed drill and cite the reasoning or evidence behind every conclusion.", duration: 30 },
+    judgment: { title: "Trade-off decision studio", drill: "Compare two viable approaches and state the decision, risk, and fallback.", duration: 25 },
+    communication: { title: "Pressure communication rehearsal", drill: "Deliver a two-minute answer aloud, then improve pacing and specificity.", duration: 15 },
+  };
+  return {
+    criterionId: criterion.id,
+    criterionLabel: criterion.label,
+    ...(catalog[criterion.id] || {
+      title: `${criterion.label} practice drill`,
+      drill: `Complete a focused ${criterion.label.toLowerCase()} exercise and request targeted feedback.`,
+      duration: 20,
+    }),
+  };
+};
+
 export async function getTargetStandard(userId: number) {
   const db = await getDb();
   if (!db) return null;
@@ -188,6 +208,7 @@ export async function upsertTargetStandard(
     notes: input.notes || null,
     version: `v${nextVersion}`,
     rubricCriteria: JSON.stringify(rubricCriteria),
+    rubricModules: JSON.stringify(rubricCriteria.map(moduleForCriterion)),
     reviewStatus: existing?.reviewStatus || "draft",
   };
   const { userId: _userId, ...updateValues } = values;
@@ -272,17 +293,49 @@ export async function ingestTargetSource(
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 4000);
-  await db.insert(targetSources).values({
-    targetStandardId: standard.id,
-    jurisdiction: input.jurisdiction || standard.jurisdiction || null,
-    url: parsed.toString(),
-    title,
-    publisher: parsed.hostname,
-    sourceType: input.sourceType || "official",
-    contentExcerpt: excerpt,
-    status: "pending_review",
-    fetchedAt: new Date(),
-  });
+  const contentHash = createHash("sha256").update(excerpt).digest("hex");
+  const previous = (await db
+    .select()
+    .from(targetSources)
+    .where(
+      and(
+        eq(targetSources.targetStandardId, standard.id),
+        eq(targetSources.url, parsed.toString())
+      )
+    )
+    .orderBy(desc(targetSources.createdAt))
+    .limit(1))[0];
+  const changed = Boolean(previous?.contentHash && previous.contentHash !== contentHash);
+  if (previous) {
+    await db
+      .update(targetSources)
+      .set({
+        title,
+        publisher: parsed.hostname,
+        contentExcerpt: excerpt,
+        contentHash,
+        fetchedAt: new Date(),
+        changeStatus: changed ? "changed" : "stable",
+        lastChangedAt: changed ? new Date() : previous.lastChangedAt,
+        status: changed && previous.status === "approved" ? "pending_review" : previous.status,
+        updatedAt: new Date(),
+      })
+      .where(eq(targetSources.id, previous.id));
+  } else {
+    await db.insert(targetSources).values({
+      targetStandardId: standard.id,
+      jurisdiction: input.jurisdiction || standard.jurisdiction || null,
+      url: parsed.toString(),
+      title,
+      publisher: parsed.hostname,
+      sourceType: input.sourceType || "official",
+      contentExcerpt: excerpt,
+      contentHash,
+      status: "pending_review",
+      changeStatus: "stable",
+      fetchedAt: new Date(),
+    });
+  }
   const sources = await getTargetSources(userId);
   return sources[0] || null;
 }
@@ -321,6 +374,55 @@ export async function reviewTargetSource(
     .where(eq(targetStandards.id, standard.id));
   const sources = await getTargetSources(userId);
   return sources.find(source => source.id === sourceId) || null;
+}
+
+export async function refreshApprovedTargetSources() {
+  const db = await getDb();
+  if (!db) return { checked: 0, changed: 0, errors: 0 };
+  const sources = await db
+    .select()
+    .from(targetSources)
+    .where(eq(targetSources.status, "approved"))
+    .limit(1000);
+  let checked = 0;
+  let changed = 0;
+  let errors = 0;
+  for (const source of sources) {
+    try {
+      const response = await fetch(source.url, {
+        signal: AbortSignal.timeout(8000),
+        headers: { Accept: "text/html,text/plain" },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const raw = (await response.text()).slice(0, 20000);
+      const excerpt = raw
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 4000);
+      const contentHash = createHash("sha256").update(excerpt).digest("hex");
+      const isChanged = Boolean(source.contentHash && source.contentHash !== contentHash);
+      await db
+        .update(targetSources)
+        .set({
+          contentExcerpt: excerpt,
+          contentHash,
+          fetchedAt: new Date(),
+          changeStatus: isChanged ? "changed" : "stable",
+          lastChangedAt: isChanged ? new Date() : source.lastChangedAt,
+          status: isChanged ? "pending_review" : source.status,
+          updatedAt: new Date(),
+        })
+        .where(eq(targetSources.id, source.id));
+      checked += 1;
+      if (isChanged) changed += 1;
+    } catch {
+      errors += 1;
+    }
+  }
+  return { checked, changed, errors };
 }
 
 export async function getReadinessScore(userId: number) {
@@ -388,16 +490,84 @@ export async function getReadinessScore(userId: number) {
         0
       )
     : 0;
+  let rubricModules: Array<Record<string, unknown>> = [];
+  try {
+    rubricModules = JSON.parse(standard.rubricModules || "[]") as Array<Record<string, unknown>>;
+  } catch {
+    rubricModules = criteria.map(moduleForCriterion);
+  }
+  const forecast = standard.targetDate
+    ? (() => {
+        const daysRemaining = Math.max(
+          0,
+          Math.ceil((standard.targetDate!.getTime() - Date.now()) / 86400000)
+        );
+        const gap = Math.max(0, 80 - Math.round(weighted));
+        const attemptsPerWeek = attempts.length
+          ? Math.max(1, Math.round((attempts.length / 4) * 10) / 10)
+          : 0;
+        const estimatedWeeks = gap === 0 ? 0 : Math.ceil(gap / 5);
+        return {
+          targetDate: standard.targetDate,
+          daysRemaining,
+          estimatedWeeks,
+          attemptsPerWeek,
+          status:
+            gap === 0
+              ? "on-track"
+              : daysRemaining >= estimatedWeeks * 7
+                ? "plausible"
+                : "at-risk",
+        };
+      })()
+    : null;
+  const confidence = attempts.length >= 10 ? "high" : attempts.length >= 3 ? "medium" : "low";
+  const latest = (await db
+    .select()
+    .from(readinessScoreHistory)
+    .where(
+      and(
+        eq(readinessScoreHistory.userId, userId),
+        eq(readinessScoreHistory.targetStandardId, standard.id)
+      )
+    )
+    .orderBy(desc(readinessScoreHistory.createdAt))
+    .limit(1))[0];
+  if (!latest || latest.score !== Math.round(weighted) || latest.attempts !== attempts.length) {
+    await db.insert(readinessScoreHistory).values({
+      userId,
+      targetStandardId: standard.id,
+      version: standard.version,
+      score: Math.round(weighted),
+      overallPracticeScore: Math.round(overall * 10) / 10,
+      attempts: attempts.length,
+      confidence,
+      breakdown: JSON.stringify(breakdown),
+      forecast: forecast ? JSON.stringify(forecast) : null,
+    });
+  }
   return {
     targetStandardId: standard.id,
     version: standard.version,
     score: Math.round(weighted),
     overallPracticeScore: Math.round(overall * 10) / 10,
     attempts: attempts.length,
-    confidence:
-      attempts.length >= 10 ? "high" : attempts.length >= 3 ? "medium" : "low",
+    confidence,
     breakdown,
+    modules: rubricModules,
+    forecast,
   };
+}
+
+export async function getReadinessScoreHistory(userId: number, limit = 24) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(readinessScoreHistory)
+    .where(eq(readinessScoreHistory.userId, userId))
+    .orderBy(desc(readinessScoreHistory.createdAt))
+    .limit(Math.min(100, Math.max(1, limit)));
 }
 
 export type SavedDateRange = {

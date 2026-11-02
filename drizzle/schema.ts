@@ -67,6 +67,7 @@ export const targetStandards = mysqlTable("target_standards", {
   reviewStatus: varchar("reviewStatus", { length: 32 })
     .default("draft")
     .notNull(),
+  rubricModules: text("rubricModules"),
   lastReviewedAt: timestamp("lastReviewedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -96,12 +97,35 @@ export const targetSources = mysqlTable("target_sources", {
     .default("official")
     .notNull(),
   contentExcerpt: text("contentExcerpt"),
+  contentHash: varchar("contentHash", { length: 64 }),
   status: varchar("status", { length: 32 }).default("pending_review").notNull(),
+  changeStatus: varchar("changeStatus", { length: 32 })
+    .default("stable")
+    .notNull(),
+  lastChangedAt: timestamp("lastChangedAt"),
   reviewNotes: varchar("reviewNotes", { length: 512 }),
   fetchedAt: timestamp("fetchedAt"),
   reviewedAt: timestamp("reviewedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const readinessScoreHistory = mysqlTable("readiness_score_history", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  targetStandardId: int("targetStandardId")
+    .notNull()
+    .references(() => targetStandards.id, { onDelete: "cascade" }),
+  version: varchar("version", { length: 32 }).notNull(),
+  score: int("score").notNull(),
+  overallPracticeScore: int("overallPracticeScore").notNull(),
+  attempts: int("attempts").notNull(),
+  confidence: varchar("confidence", { length: 16 }).notNull(),
+  breakdown: text("breakdown").notNull(),
+  forecast: text("forecast"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
 export const coachingSessions = mysqlTable("coaching_sessions", {

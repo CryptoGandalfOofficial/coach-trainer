@@ -18,6 +18,7 @@ import {
   getLatestWeeklySummary,
   getSavedDateRanges,
   getReadinessScore,
+  getReadinessScoreHistory,
   getTargetStandard,
   getTargetSources,
   getTargetStandardVersions,
@@ -29,6 +30,7 @@ import {
   updateDateRange,
   ingestTargetSource,
   reviewTargetSource,
+  refreshApprovedTargetSources,
   upsertCoachProfile,
   upsertTargetStandard,
 } from "./db";
@@ -579,6 +581,9 @@ export const appRouter = router({
     readinessScore: protectedProcedure.query(({ ctx }) =>
       getReadinessScore(ctx.user.id)
     ),
+    readinessScoreHistory: protectedProcedure.query(({ ctx }) =>
+      getReadinessScoreHistory(ctx.user.id)
+    ),
   }),
   coach: router({
     start: protectedProcedure
@@ -723,6 +728,9 @@ export const appRouter = router({
   scheduled: router({
     generateWeeklySummaries: adminProcedure.mutation(() =>
       createWeeklySummaries()
+    ),
+    refreshTargetSources: adminProcedure.mutation(() =>
+      refreshApprovedTargetSources()
     ),
   }),
 });
