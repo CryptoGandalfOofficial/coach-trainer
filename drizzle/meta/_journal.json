@@ -78,6 +78,13 @@
       "when": 1791365208084,
       "tag": "0010_thin_karnak",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1793588358726,
+      "tag": "0011_flaky_power_man",
+      "breakpoints": true
     }
   ]
 }
