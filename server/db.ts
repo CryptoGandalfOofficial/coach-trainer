@@ -10,7 +10,9 @@ import {
   targetStandards,
   targetStandardVersions,
   targetSources,
+  targetSourceReviews,
   readinessScoreHistory,
+  readinessForecastOutcomes,
   users,
   weeklySummaries,
   type InsertUser,
@@ -126,11 +128,34 @@ export type TargetStandardInput = {
 };
 
 const moduleForCriterion = (criterion: { id: string; label: string }) => {
-  const catalog: Record<string, { title: string; drill: string; duration: number }> = {
-    clarity: { title: "Structured response lab", drill: "Answer with a clear claim, three supporting points, and a concise close.", duration: 20 },
-    evidence: { title: "Evidence and correctness sprint", drill: "Complete one timed drill and cite the reasoning or evidence behind every conclusion.", duration: 30 },
-    judgment: { title: "Trade-off decision studio", drill: "Compare two viable approaches and state the decision, risk, and fallback.", duration: 25 },
-    communication: { title: "Pressure communication rehearsal", drill: "Deliver a two-minute answer aloud, then improve pacing and specificity.", duration: 15 },
+  const catalog: Record<
+    string,
+    { title: string; drill: string; duration: number }
+  > = {
+    clarity: {
+      title: "Structured response lab",
+      drill:
+        "Answer with a clear claim, three supporting points, and a concise close.",
+      duration: 20,
+    },
+    evidence: {
+      title: "Evidence and correctness sprint",
+      drill:
+        "Complete one timed drill and cite the reasoning or evidence behind every conclusion.",
+      duration: 30,
+    },
+    judgment: {
+      title: "Trade-off decision studio",
+      drill:
+        "Compare two viable approaches and state the decision, risk, and fallback.",
+      duration: 25,
+    },
+    communication: {
+      title: "Pressure communication rehearsal",
+      drill:
+        "Deliver a two-minute answer aloud, then improve pacing and specificity.",
+      duration: 15,
+    },
   };
   return {
     criterionId: criterion.id,
@@ -294,18 +319,22 @@ export async function ingestTargetSource(
     .trim()
     .slice(0, 4000);
   const contentHash = createHash("sha256").update(excerpt).digest("hex");
-  const previous = (await db
-    .select()
-    .from(targetSources)
-    .where(
-      and(
-        eq(targetSources.targetStandardId, standard.id),
-        eq(targetSources.url, parsed.toString())
+  const previous = (
+    await db
+      .select()
+      .from(targetSources)
+      .where(
+        and(
+          eq(targetSources.targetStandardId, standard.id),
+          eq(targetSources.url, parsed.toString())
+        )
       )
-    )
-    .orderBy(desc(targetSources.createdAt))
-    .limit(1))[0];
-  const changed = Boolean(previous?.contentHash && previous.contentHash !== contentHash);
+      .orderBy(desc(targetSources.createdAt))
+      .limit(1)
+  )[0];
+  const changed = Boolean(
+    previous?.contentHash && previous.contentHash !== contentHash
+  );
   if (previous) {
     await db
       .update(targetSources)
@@ -317,7 +346,10 @@ export async function ingestTargetSource(
         fetchedAt: new Date(),
         changeStatus: changed ? "changed" : "stable",
         lastChangedAt: changed ? new Date() : previous.lastChangedAt,
-        status: changed && previous.status === "approved" ? "pending_review" : previous.status,
+        status:
+          changed && previous.status === "approved"
+            ? "pending_review"
+            : previous.status,
         updatedAt: new Date(),
       })
       .where(eq(targetSources.id, previous.id));
@@ -350,6 +382,19 @@ export async function reviewTargetSource(
   if (!db) return null;
   const standard = await getTargetStandard(userId);
   if (!standard) return null;
+  const source = (
+    await db
+      .select()
+      .from(targetSources)
+      .where(
+        and(
+          eq(targetSources.id, sourceId),
+          eq(targetSources.targetStandardId, standard.id)
+        )
+      )
+      .limit(1)
+  )[0];
+  if (!source) return null;
   await db
     .update(targetSources)
     .set({
@@ -364,6 +409,13 @@ export async function reviewTargetSource(
         eq(targetSources.targetStandardId, standard.id)
       )
     );
+  await db.insert(targetSourceReviews).values({
+    sourceId,
+    reviewerUserId: userId,
+    previousStatus: source.status,
+    status,
+    reviewNotes: reviewNotes || null,
+  });
   await db
     .update(targetStandards)
     .set({
@@ -374,6 +426,22 @@ export async function reviewTargetSource(
     .where(eq(targetStandards.id, standard.id));
   const sources = await getTargetSources(userId);
   return sources.find(source => source.id === sourceId) || null;
+}
+
+export async function getTargetSourceReviewHistory(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const standard = await getTargetStandard(userId);
+  if (!standard) return [];
+  const sources = await getTargetSources(userId);
+  if (!sources.length) return [];
+  const sourceIds = new Set(sources.map(source => source.id));
+  const reviews = await db
+    .select()
+    .from(targetSourceReviews)
+    .orderBy(desc(targetSourceReviews.reviewedAt))
+    .limit(200);
+  return reviews.filter(review => sourceIds.has(review.sourceId));
 }
 
 export async function refreshApprovedTargetSources() {
@@ -403,7 +471,9 @@ export async function refreshApprovedTargetSources() {
         .trim()
         .slice(0, 4000);
       const contentHash = createHash("sha256").update(excerpt).digest("hex");
-      const isChanged = Boolean(source.contentHash && source.contentHash !== contentHash);
+      const isChanged = Boolean(
+        source.contentHash && source.contentHash !== contentHash
+      );
       await db
         .update(targetSources)
         .set({
@@ -492,7 +562,9 @@ export async function getReadinessScore(userId: number) {
     : 0;
   let rubricModules: Array<Record<string, unknown>> = [];
   try {
-    rubricModules = JSON.parse(standard.rubricModules || "[]") as Array<Record<string, unknown>>;
+    rubricModules = JSON.parse(standard.rubricModules || "[]") as Array<
+      Record<string, unknown>
+    >;
   } catch {
     rubricModules = criteria.map(moduleForCriterion);
   }
@@ -521,19 +593,26 @@ export async function getReadinessScore(userId: number) {
         };
       })()
     : null;
-  const confidence = attempts.length >= 10 ? "high" : attempts.length >= 3 ? "medium" : "low";
-  const latest = (await db
-    .select()
-    .from(readinessScoreHistory)
-    .where(
-      and(
-        eq(readinessScoreHistory.userId, userId),
-        eq(readinessScoreHistory.targetStandardId, standard.id)
+  const confidence =
+    attempts.length >= 10 ? "high" : attempts.length >= 3 ? "medium" : "low";
+  const latest = (
+    await db
+      .select()
+      .from(readinessScoreHistory)
+      .where(
+        and(
+          eq(readinessScoreHistory.userId, userId),
+          eq(readinessScoreHistory.targetStandardId, standard.id)
+        )
       )
-    )
-    .orderBy(desc(readinessScoreHistory.createdAt))
-    .limit(1))[0];
-  if (!latest || latest.score !== Math.round(weighted) || latest.attempts !== attempts.length) {
+      .orderBy(desc(readinessScoreHistory.createdAt))
+      .limit(1)
+  )[0];
+  if (
+    !latest ||
+    latest.score !== Math.round(weighted) ||
+    latest.attempts !== attempts.length
+  ) {
     await db.insert(readinessScoreHistory).values({
       userId,
       targetStandardId: standard.id,
@@ -568,6 +647,127 @@ export async function getReadinessScoreHistory(userId: number, limit = 24) {
     .where(eq(readinessScoreHistory.userId, userId))
     .orderBy(desc(readinessScoreHistory.createdAt))
     .limit(Math.min(100, Math.max(1, limit)));
+}
+
+export type ActualReadinessOutcome = "passed" | "not-passed";
+
+export function forecastMatchesOutcome(
+  predictedStatus: string,
+  actualOutcome: ActualReadinessOutcome
+) {
+  if (predictedStatus === "unknown") return false;
+  return actualOutcome === "passed"
+    ? predictedStatus !== "at-risk"
+    : predictedStatus === "at-risk";
+}
+
+export async function recordReadinessOutcome(
+  userId: number,
+  historyId: number,
+  actualOutcome: ActualReadinessOutcome,
+  actualScore?: number,
+  notes?: string
+) {
+  const db = await getDb();
+  if (!db) return null;
+  const history = (
+    await db
+      .select()
+      .from(readinessScoreHistory)
+      .where(
+        and(
+          eq(readinessScoreHistory.id, historyId),
+          eq(readinessScoreHistory.userId, userId)
+        )
+      )
+      .limit(1)
+  )[0];
+  if (!history) return null;
+  const existing = (
+    await db
+      .select()
+      .from(readinessForecastOutcomes)
+      .where(
+        and(
+          eq(readinessForecastOutcomes.userId, userId),
+          eq(readinessForecastOutcomes.historyId, historyId)
+        )
+      )
+      .limit(1)
+  )[0];
+  const values = {
+    userId,
+    targetStandardId: history.targetStandardId,
+    historyId,
+    actualOutcome,
+    actualScore: actualScore ?? null,
+    notes: notes || null,
+    observedAt: new Date(),
+  };
+  if (existing) {
+    await db
+      .update(readinessForecastOutcomes)
+      .set(values)
+      .where(eq(readinessForecastOutcomes.id, existing.id));
+  } else {
+    await db.insert(readinessForecastOutcomes).values(values);
+  }
+  return getForecastAccuracy(userId);
+}
+
+export async function getForecastAccuracy(userId: number) {
+  const db = await getDb();
+  if (!db) {
+    return {
+      totalForecasts: 0,
+      resolvedForecasts: 0,
+      correctForecasts: 0,
+      accuracyPercent: null,
+      outcomes: [],
+    };
+  }
+  const [histories, outcomes] = await Promise.all([
+    db
+      .select()
+      .from(readinessScoreHistory)
+      .where(eq(readinessScoreHistory.userId, userId))
+      .orderBy(desc(readinessScoreHistory.createdAt))
+      .limit(100),
+    db
+      .select()
+      .from(readinessForecastOutcomes)
+      .where(eq(readinessForecastOutcomes.userId, userId))
+      .orderBy(desc(readinessForecastOutcomes.observedAt))
+      .limit(100),
+  ]);
+  const historyById = new Map(histories.map(history => [history.id, history]));
+  const evaluated = outcomes.flatMap(outcome => {
+    const history = historyById.get(outcome.historyId);
+    if (!history) return [];
+    let predictedStatus = "unknown";
+    try {
+      predictedStatus =
+        (JSON.parse(history.forecast || "{}").status as string | undefined) ||
+        "unknown";
+    } catch {
+      predictedStatus = "unknown";
+    }
+    const correct = forecastMatchesOutcome(
+      predictedStatus,
+      outcome.actualOutcome as ActualReadinessOutcome
+    );
+    return [{ ...outcome, predictedStatus, correct, score: history.score }];
+  });
+  const correctForecasts = evaluated.filter(item => item.correct).length;
+  return {
+    totalForecasts: histories.length,
+    resolvedForecasts: evaluated.length,
+    correctForecasts,
+    accuracyPercent: evaluated.length
+      ? Math.round((correctForecasts / evaluated.length) * 100)
+      : null,
+    outcomes: evaluated.slice(0, 12),
+  };
 }
 
 export type SavedDateRange = {

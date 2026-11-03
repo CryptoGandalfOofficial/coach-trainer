@@ -209,6 +209,11 @@ export default function Home() {
   const [customEndDate, setCustomEndDate] = useState("");
   const [rangeName, setRangeName] = useState("");
   const [editingRangeName, setEditingRangeName] = useState("");
+  const [outcomeHistoryId, setOutcomeHistoryId] = useState("");
+  const [actualOutcome, setActualOutcome] = useState<"passed" | "not-passed">(
+    "passed"
+  );
+  const [actualScore, setActualScore] = useState("");
   const chartRef = useRef<HTMLDivElement>(null);
   const deletedRangeRef = useRef<{
     name: string;
@@ -233,6 +238,11 @@ export default function Home() {
     enabled: isAuthenticated,
     retry: false,
   });
+  const targetSourceReviewHistory =
+    trpc.profile.targetSourceReviewHistory.useQuery(undefined, {
+      enabled: isAuthenticated,
+      retry: false,
+    });
   const readinessScore = trpc.profile.readinessScore.useQuery(undefined, {
     enabled: isAuthenticated,
     retry: false,
@@ -241,6 +251,10 @@ export default function Home() {
     undefined,
     { enabled: isAuthenticated, retry: false }
   );
+  const forecastAccuracy = trpc.profile.forecastAccuracy.useQuery(undefined, {
+    enabled: isAuthenticated,
+    retry: false,
+  });
   const weeklySummary = trpc.profile.weeklySummary.useQuery(undefined, {
     enabled: isAuthenticated,
     retry: false,
@@ -327,10 +341,19 @@ export default function Home() {
   const reviewSource = trpc.profile.reviewTargetSource.useMutation({
     onSuccess: () => {
       void targetSources.refetch();
+      void targetSourceReviewHistory.refetch();
       toast.success("Source review updated");
     },
     onError: error => toast.error(error.message),
   });
+  const recordReadinessOutcome =
+    trpc.profile.recordReadinessOutcome.useMutation({
+      onSuccess: () => {
+        void forecastAccuracy.refetch();
+        toast.success("Forecast outcome recorded");
+      },
+      onError: error => toast.error(error.message),
+    });
   const start = trpc.coach.start.useMutation({
     onSuccess: data => {
       setSession(data);
@@ -350,6 +373,9 @@ export default function Home() {
     onSuccess: data => {
       setFeedback(data);
       void progressQuery.refetch();
+      void readinessScore.refetch();
+      void readinessHistory.refetch();
+      void forecastAccuracy.refetch();
     },
   });
 
@@ -1445,6 +1471,9 @@ Open Atlas Readiness: ${window.location.href}`)}`;
     );
   }
 
+  const historyPoints = (readinessHistory.data || []).slice(0, 12).reverse();
+  const historyMax = Math.max(100, ...historyPoints.map(point => point.score));
+
   const targetStandardForm = (
     <Card className="mb-8 overflow-hidden border-slate-200 shadow-sm">
       <CardHeader className="bg-slate-950 text-white">
@@ -1677,7 +1706,9 @@ Open Atlas Readiness: ${window.location.href}`)}`;
           {readinessScore.data?.forecast ? (
             <div className="rounded-2xl bg-slate-950 p-4 text-white">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-slate-300">Target-date outlook</span>
+                <span className="text-sm text-slate-300">
+                  Target-date outlook
+                </span>
                 <Badge className="bg-white/15 text-white">
                   {readinessScore.data.forecast.status}
                 </Badge>
@@ -1700,33 +1731,208 @@ Open Atlas Readiness: ${window.location.href}`)}`;
               Criterion → practice module mapping
             </p>
             <div className="space-y-2">
-              {(readinessScore.data?.modules || []).slice(0, 4).map((module, index) => {
-                const item = module as { title?: string; skill?: string; durationMinutes?: number };
-                return (
-                  <div key={`${item.title || "module"}-${index}`} className="rounded-xl border border-slate-200 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-medium text-slate-800">{item.title || "Targeted practice drill"}</span>
-                      <Badge variant="secondary">{item.durationMinutes || 30} min</Badge>
+              {(readinessScore.data?.modules || [])
+                .slice(0, 4)
+                .map((module, index) => {
+                  const item = module as {
+                    title?: string;
+                    skill?: string;
+                    durationMinutes?: number;
+                  };
+                  return (
+                    <div
+                      key={`${item.title || "module"}-${index}`}
+                      className="rounded-xl border border-slate-200 p-3"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-medium text-slate-800">
+                          {item.title || "Targeted practice drill"}
+                        </span>
+                        <Badge variant="secondary">
+                          {item.durationMinutes || 30} min
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Focus: {item.skill || "criterion gap"}
+                      </p>
                     </div>
-                    <p className="mt-1 text-xs text-slate-500">Focus: {item.skill || "criterion gap"}</p>
-                  </div>
-                );
-              })}
+                  );
+                })}
             </div>
           </div>
           <div>
-            <p className="mb-3 text-sm font-semibold text-slate-900">Score history</p>
-            {readinessHistory.data?.length ? (
-              <div className="flex h-20 items-end gap-1" aria-label="Readiness score history">
-                {readinessHistory.data.slice(0, 12).reverse().map(point => (
-                  <div key={point.id} className="group flex min-w-0 flex-1 flex-col justify-end">
-                    <div className="rounded-t bg-sky-500" style={{ height: `${Math.max(8, point.score)}%` }} title={`${point.score}%`} />
-                  </div>
-                ))}
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-slate-900">
+                Readiness trend
+              </p>
+              <span className="text-xs text-slate-500">
+                Latest 12 snapshots
+              </span>
+            </div>
+            {historyPoints.length ? (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                <svg
+                  viewBox="0 0 360 140"
+                  role="img"
+                  aria-labelledby="readiness-trend-title readiness-trend-desc"
+                  className="h-36 w-full overflow-visible"
+                >
+                  <title id="readiness-trend-title">
+                    Readiness score trend
+                  </title>
+                  <desc id="readiness-trend-desc">
+                    Readiness score snapshots over time, from 0 to 100 percent.
+                  </desc>
+                  <line x1="24" y1="12" x2="24" y2="116" stroke="#cbd5e1" />
+                  <line x1="24" y1="116" x2="348" y2="116" stroke="#cbd5e1" />
+                  <text x="0" y="18" className="fill-slate-500 text-[9px]">
+                    100
+                  </text>
+                  <text x="7" y="120" className="fill-slate-500 text-[9px]">
+                    0
+                  </text>
+                  <polyline
+                    fill="none"
+                    stroke="#0284c7"
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    points={historyPoints
+                      .map((point, index) => {
+                        const x =
+                          historyPoints.length === 1
+                            ? 186
+                            : 28 + (index * 316) / (historyPoints.length - 1);
+                        const y = 116 - (point.score / historyMax) * 100;
+                        return `${x},${y}`;
+                      })
+                      .join(" ")}
+                  />
+                  {historyPoints.map((point, index) => {
+                    const x =
+                      historyPoints.length === 1
+                        ? 186
+                        : 28 + (index * 316) / (historyPoints.length - 1);
+                    const y = 116 - (point.score / historyMax) * 100;
+                    return (
+                      <g key={point.id}>
+                        <circle
+                          cx={x}
+                          cy={y}
+                          r="4"
+                          fill="#0284c7"
+                          stroke="white"
+                          strokeWidth="2"
+                        />
+                        <title>{`${point.score}% on ${new Date(point.createdAt).toLocaleDateString()}`}</title>
+                      </g>
+                    );
+                  })}
+                </svg>
+                <div className="mt-1 flex justify-between text-[10px] text-slate-500">
+                  <span>
+                    {new Date(historyPoints[0].createdAt).toLocaleDateString()}
+                  </span>
+                  <span>
+                    {new Date(
+                      historyPoints[historyPoints.length - 1].createdAt
+                    ).toLocaleDateString()}
+                  </span>
+                </div>
               </div>
             ) : (
-              <p className="text-xs text-slate-500">Complete a drill to begin your trend.</p>
+              <p className="text-xs text-slate-500">
+                Complete a drill to begin your trend.
+              </p>
             )}
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-slate-900">
+                Forecast accuracy
+              </p>
+              <Badge variant="secondary">
+                {forecastAccuracy.data?.accuracyPercent == null
+                  ? "Awaiting outcomes"
+                  : `${forecastAccuracy.data.accuracyPercent}% accurate`}
+              </Badge>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              Record what happened after a real assessment to calibrate Atlas’s
+              directional forecasts.
+            </p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <label className="text-xs text-slate-600 sm:col-span-3">
+                Forecast snapshot
+                <select
+                  value={
+                    outcomeHistoryId ||
+                    historyPoints[historyPoints.length - 1]?.id?.toString() ||
+                    ""
+                  }
+                  onChange={event => setOutcomeHistoryId(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2 text-sm text-slate-900"
+                >
+                  {historyPoints.map(point => (
+                    <option key={point.id} value={point.id}>
+                      {new Date(point.createdAt).toLocaleDateString()} ·{" "}
+                      {point.score}% readiness
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-xs text-slate-600">
+                Actual outcome
+                <select
+                  value={actualOutcome}
+                  onChange={event =>
+                    setActualOutcome(
+                      event.target.value as "passed" | "not-passed"
+                    )
+                  }
+                  className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2 text-sm text-slate-900"
+                >
+                  <option value="passed">Passed</option>
+                  <option value="not-passed">Not passed</option>
+                </select>
+              </label>
+              <label className="text-xs text-slate-600">
+                Actual score
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={actualScore}
+                  onChange={event => setActualScore(event.target.value)}
+                  placeholder="Optional"
+                  className="mt-1 w-full rounded-lg border border-slate-200 p-2 text-sm text-slate-900"
+                />
+              </label>
+              <Button
+                className="self-end"
+                disabled={
+                  !historyPoints.length || recordReadinessOutcome.isPending
+                }
+                onClick={() =>
+                  recordReadinessOutcome.mutate({
+                    historyId: Number(
+                      outcomeHistoryId ||
+                        historyPoints[historyPoints.length - 1]?.id
+                    ),
+                    actualOutcome,
+                    actualScore: actualScore ? Number(actualScore) : undefined,
+                  })
+                }
+              >
+                {recordReadinessOutcome.isPending
+                  ? "Saving…"
+                  : "Record outcome"}
+              </Button>
+            </div>
+            <p className="mt-2 text-[11px] text-slate-500">
+              {forecastAccuracy.data?.resolvedForecasts || 0} of{" "}
+              {forecastAccuracy.data?.totalForecasts || 0} snapshots resolved
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -1759,59 +1965,111 @@ Open Atlas Readiness: ${window.location.href}`)}`;
                 No sources captured yet.
               </p>
             ) : (
-              targetSources.data.map(source => (
-                <div
-                  key={source.id}
-                  className="rounded-2xl border border-slate-200 p-4"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-slate-900">
-                        {source.title || source.publisher || source.url}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {source.jurisdiction || "Global"} ·{" "}
-                        {source.status.replace("_", " ")}
-                      </p>
+              targetSources.data.map(source => {
+                const reviewHistory = (
+                  targetSourceReviewHistory.data || []
+                ).filter(review => review.sourceId === source.id);
+                const sourceChanged = source.changeStatus === "changed";
+                return (
+                  <div
+                    key={source.id}
+                    className="rounded-2xl border border-slate-200 p-4"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-slate-900">
+                          {source.title || source.publisher || source.url}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {source.jurisdiction || "Global"} ·{" "}
+                          {source.status.replace("_", " ")}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <Badge variant="secondary">{source.sourceType}</Badge>
+                        <Badge
+                          variant={sourceChanged ? "destructive" : "outline"}
+                          aria-label={`Source status: ${sourceChanged ? "changed" : "stable"}`}
+                        >
+                          {sourceChanged ? "Changed" : "Stable"}
+                        </Badge>
+                      </div>
                     </div>
-                    <Badge variant="secondary">{source.sourceType}</Badge>
+                    {source.contentExcerpt && (
+                      <p className="mt-3 line-clamp-3 text-xs leading-5 text-slate-600">
+                        {source.contentExcerpt}
+                      </p>
+                    )}
+                    {reviewHistory.length > 0 && (
+                      <details className="mt-3 rounded-xl bg-slate-50 p-3">
+                        <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+                          Review history ({reviewHistory.length})
+                        </summary>
+                        <ol className="mt-3 space-y-2 border-l border-slate-200 pl-3">
+                          {reviewHistory.map(review => (
+                            <li
+                              key={review.id}
+                              className="text-xs text-slate-600"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-medium capitalize text-slate-800">
+                                  {review.status.replace("_", " ")}
+                                </span>
+                                <time
+                                  dateTime={new Date(
+                                    review.reviewedAt
+                                  ).toISOString()}
+                                >
+                                  {new Date(
+                                    review.reviewedAt
+                                  ).toLocaleDateString()}
+                                </time>
+                              </div>
+                              <p>
+                                {review.previousStatus
+                                  ? `From ${review.previousStatus.replace("_", " ")}`
+                                  : "Initial review"}
+                                {review.reviewNotes
+                                  ? ` · ${review.reviewNotes}`
+                                  : ""}
+                              </p>
+                            </li>
+                          ))}
+                        </ol>
+                      </details>
+                    )}
+                    {source.status === "pending_review" && (
+                      <div className="mt-3 flex gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() =>
+                            reviewSource.mutate({
+                              sourceId: source.id,
+                              status: "approved",
+                            })
+                          }
+                          disabled={reviewSource.isPending}
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            reviewSource.mutate({
+                              sourceId: source.id,
+                              status: "rejected",
+                            })
+                          }
+                          disabled={reviewSource.isPending}
+                        >
+                          Reject
+                        </Button>
+                      </div>
+                    )}
                   </div>
-                  {source.contentExcerpt && (
-                    <p className="mt-3 line-clamp-3 text-xs leading-5 text-slate-600">
-                      {source.contentExcerpt}
-                    </p>
-                  )}
-                  {source.status === "pending_review" && (
-                    <div className="mt-3 flex gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() =>
-                          reviewSource.mutate({
-                            sourceId: source.id,
-                            status: "approved",
-                          })
-                        }
-                        disabled={reviewSource.isPending}
-                      >
-                        Approve
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          reviewSource.mutate({
-                            sourceId: source.id,
-                            status: "rejected",
-                          })
-                        }
-                        disabled={reviewSource.isPending}
-                      >
-                        Reject
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </CardContent>

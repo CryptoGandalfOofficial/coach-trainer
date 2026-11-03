@@ -19,6 +19,8 @@ import {
   getSavedDateRanges,
   getReadinessScore,
   getReadinessScoreHistory,
+  getForecastAccuracy,
+  getTargetSourceReviewHistory,
   getTargetStandard,
   getTargetSources,
   getTargetStandardVersions,
@@ -30,6 +32,7 @@ import {
   updateDateRange,
   ingestTargetSource,
   reviewTargetSource,
+  recordReadinessOutcome,
   refreshApprovedTargetSources,
   upsertCoachProfile,
   upsertTargetStandard,
@@ -553,6 +556,9 @@ export const appRouter = router({
     targetSources: protectedProcedure.query(({ ctx }) =>
       getTargetSources(ctx.user.id)
     ),
+    targetSourceReviewHistory: protectedProcedure.query(({ ctx }) =>
+      getTargetSourceReviewHistory(ctx.user.id)
+    ),
     ingestTargetSource: protectedProcedure
       .input(
         z.object({
@@ -584,6 +590,27 @@ export const appRouter = router({
     readinessScoreHistory: protectedProcedure.query(({ ctx }) =>
       getReadinessScoreHistory(ctx.user.id)
     ),
+    forecastAccuracy: protectedProcedure.query(({ ctx }) =>
+      getForecastAccuracy(ctx.user.id)
+    ),
+    recordReadinessOutcome: protectedProcedure
+      .input(
+        z.object({
+          historyId: z.number().int().positive(),
+          actualOutcome: z.enum(["passed", "not-passed"]),
+          actualScore: z.number().int().min(0).max(100).optional(),
+          notes: z.string().max(512).optional(),
+        })
+      )
+      .mutation(({ ctx, input }) =>
+        recordReadinessOutcome(
+          ctx.user.id,
+          input.historyId,
+          input.actualOutcome,
+          input.actualScore,
+          input.notes
+        )
+      ),
   }),
   coach: router({
     start: protectedProcedure

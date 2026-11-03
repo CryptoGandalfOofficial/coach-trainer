@@ -85,6 +85,13 @@
       "when": 1793588358726,
       "tag": "0011_flaky_power_man",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1793588585777,
+      "tag": "0012_petite_vertigo",
+      "breakpoints": true
     }
   ]
 }

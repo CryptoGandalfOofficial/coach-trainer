@@ -110,6 +110,20 @@ export const targetSources = mysqlTable("target_sources", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export const targetSourceReviews = mysqlTable("target_source_reviews", {
+  id: int("id").autoincrement().primaryKey(),
+  sourceId: int("sourceId")
+    .notNull()
+    .references(() => targetSources.id, { onDelete: "cascade" }),
+  reviewerUserId: int("reviewerUserId")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  previousStatus: varchar("previousStatus", { length: 32 }),
+  status: varchar("status", { length: 32 }).notNull(),
+  reviewNotes: varchar("reviewNotes", { length: 512 }),
+  reviewedAt: timestamp("reviewedAt").defaultNow().notNull(),
+});
+
 export const readinessScoreHistory = mysqlTable("readiness_score_history", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId")
@@ -127,6 +141,26 @@ export const readinessScoreHistory = mysqlTable("readiness_score_history", {
   forecast: text("forecast"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
+
+export const readinessForecastOutcomes = mysqlTable(
+  "readiness_forecast_outcomes",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    targetStandardId: int("targetStandardId")
+      .notNull()
+      .references(() => targetStandards.id, { onDelete: "cascade" }),
+    historyId: int("historyId")
+      .notNull()
+      .references(() => readinessScoreHistory.id, { onDelete: "cascade" }),
+    actualOutcome: varchar("actualOutcome", { length: 32 }).notNull(),
+    actualScore: int("actualScore"),
+    notes: varchar("notes", { length: 512 }),
+    observedAt: timestamp("observedAt").defaultNow().notNull(),
+  }
+);
 
 export const coachingSessions = mysqlTable("coaching_sessions", {
   id: int("id").autoincrement().primaryKey(),
