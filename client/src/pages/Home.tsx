@@ -1933,6 +1933,32 @@ Open Atlas Readiness: ${window.location.href}`)}`;
               {forecastAccuracy.data?.resolvedForecasts || 0} of{" "}
               {forecastAccuracy.data?.totalForecasts || 0} snapshots resolved
             </p>
+            {forecastAccuracy.data?.calibration?.length ? (
+              <div className="mt-4 border-t border-slate-100 pt-3">
+                <p className="text-xs font-semibold text-slate-800">
+                  Calibration by target context
+                </p>
+                <div className="mt-2 space-y-2">
+                  {forecastAccuracy.data.calibration.map(segment => (
+                    <div
+                      key={`${segment.outcomeType}-${segment.jurisdiction}`}
+                      className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs"
+                    >
+                      <span className="min-w-0 truncate text-slate-600">
+                        <span className="font-medium capitalize text-slate-800">
+                          {segment.outcomeType.replaceAll("-", " ")}
+                        </span>
+                        <span className="text-slate-400"> · </span>
+                        {segment.jurisdiction}
+                      </span>
+                      <span className="shrink-0 font-semibold text-slate-900">
+                        {segment.accuracyPercent}% ({segment.total})
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         </CardContent>
       </Card>

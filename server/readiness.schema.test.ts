@@ -42,4 +42,30 @@ describe("Atlas Readiness schema repair", () => {
     expect(forecastMatchesOutcome("at-risk", "passed")).toBe(false);
     expect(forecastMatchesOutcome("unknown", "passed")).toBe(false);
   });
+
+  it("keeps source-change alerts and calibration dimensions wired", () => {
+    const database = readFileSync(
+      resolve(process.cwd(), "server/db.ts"),
+      "utf8"
+    );
+    const scheduled = readFileSync(
+      resolve(process.cwd(), "server/scheduled.ts"),
+      "utf8"
+    );
+
+    expect(database).toContain(
+      "const changes: Array<{ id: number; title: string; url: string }>"
+    );
+    expect(database).toContain(
+      'outcomeType: standard?.outcomeType || "unknown"'
+    );
+    expect(database).toContain(
+      'jurisdiction: standard?.jurisdiction || "Global / unspecified"'
+    );
+    expect(database).toContain(
+      "accuracyPercent: Math.round((bucket.correct / bucket.total) * 100)"
+    );
+    expect(scheduled).toContain("result.changes.map(change =>");
+    expect(scheduled).toContain("notified");
+  });
 });

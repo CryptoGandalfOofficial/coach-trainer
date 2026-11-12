@@ -446,7 +446,7 @@ export async function getTargetSourceReviewHistory(userId: number) {
 
 export async function refreshApprovedTargetSources() {
   const db = await getDb();
-  if (!db) return { checked: 0, changed: 0, errors: 0 };
+  if (!db) return { checked: 0, changed: 0, errors: 0, changes: [] };
   const sources = await db
     .select()
     .from(targetSources)
@@ -455,6 +455,7 @@ export async function refreshApprovedTargetSources() {
   let checked = 0;
   let changed = 0;
   let errors = 0;
+  const changes: Array<{ id: number; title: string; url: string }> = [];
   for (const source of sources) {
     try {
       const response = await fetch(source.url, {
@@ -487,12 +488,19 @@ export async function refreshApprovedTargetSources() {
         })
         .where(eq(targetSources.id, source.id));
       checked += 1;
-      if (isChanged) changed += 1;
+      if (isChanged) {
+        changed += 1;
+        changes.push({
+          id: source.id,
+          title: source.title || source.publisher || source.url,
+          url: source.url,
+        });
+      }
     } catch {
       errors += 1;
     }
   }
-  return { checked, changed, errors };
+  return { checked, changed, errors, changes };
 }
 
 export async function getReadinessScore(userId: number) {
@@ -724,9 +732,10 @@ export async function getForecastAccuracy(userId: number) {
       correctForecasts: 0,
       accuracyPercent: null,
       outcomes: [],
+      calibration: [],
     };
   }
-  const [histories, outcomes] = await Promise.all([
+  const [histories, outcomes, standards] = await Promise.all([
     db
       .select()
       .from(readinessScoreHistory)
@@ -739,8 +748,16 @@ export async function getForecastAccuracy(userId: number) {
       .where(eq(readinessForecastOutcomes.userId, userId))
       .orderBy(desc(readinessForecastOutcomes.observedAt))
       .limit(100),
+    db
+      .select()
+      .from(targetStandards)
+      .where(eq(targetStandards.userId, userId))
+      .limit(10),
   ]);
   const historyById = new Map(histories.map(history => [history.id, history]));
+  const standardById = new Map(
+    standards.map(standard => [standard.id, standard])
+  );
   const evaluated = outcomes.flatMap(outcome => {
     const history = historyById.get(outcome.historyId);
     if (!history) return [];
@@ -756,9 +773,40 @@ export async function getForecastAccuracy(userId: number) {
       predictedStatus,
       outcome.actualOutcome as ActualReadinessOutcome
     );
-    return [{ ...outcome, predictedStatus, correct, score: history.score }];
+    const standard = standardById.get(history.targetStandardId);
+    return [
+      {
+        ...outcome,
+        predictedStatus,
+        correct,
+        score: history.score,
+        outcomeType: standard?.outcomeType || "unknown",
+        jurisdiction: standard?.jurisdiction || "Global / unspecified",
+      },
+    ];
   });
   const correctForecasts = evaluated.filter(item => item.correct).length;
+  const calibrationMap = new Map<
+    string,
+    {
+      outcomeType: string;
+      jurisdiction: string;
+      total: number;
+      correct: number;
+    }
+  >();
+  for (const item of evaluated) {
+    const key = `${item.outcomeType}::${item.jurisdiction}`;
+    const bucket = calibrationMap.get(key) || {
+      outcomeType: item.outcomeType,
+      jurisdiction: item.jurisdiction,
+      total: 0,
+      correct: 0,
+    };
+    bucket.total += 1;
+    if (item.correct) bucket.correct += 1;
+    calibrationMap.set(key, bucket);
+  }
   return {
     totalForecasts: histories.length,
     resolvedForecasts: evaluated.length,
@@ -767,6 +815,12 @@ export async function getForecastAccuracy(userId: number) {
       ? Math.round((correctForecasts / evaluated.length) * 100)
       : null,
     outcomes: evaluated.slice(0, 12),
+    calibration: Array.from(calibrationMap.values())
+      .map(bucket => ({
+        ...bucket,
+        accuracyPercent: Math.round((bucket.correct / bucket.total) * 100),
+      }))
+      .sort((a, b) => b.total - a.total),
   };
 }
 
