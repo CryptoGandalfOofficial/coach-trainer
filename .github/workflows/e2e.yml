@@ -89,6 +89,23 @@ jobs:
       - name: Decode authenticated storage state
         run: printf '%s' "$E2E_STORAGE_STATE_B64" | base64 --decode > "$RUNNER_TEMP/e2e-storage-state.json"
 
+      - name: Validate authenticated storage state
+        env:
+          STORAGE_STATE_PATH: ${{ runner.temp }}/e2e-storage-state.json
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = process.env.STORAGE_STATE_PATH;
+          const state = JSON.parse(fs.readFileSync(path, 'utf8'));
+          if (!state || !Array.isArray(state.cookies) || !Array.isArray(state.origins)) {
+            throw new Error('Storage state must contain cookies and origins arrays');
+          }
+          if (state.cookies.length === 0 && state.origins.length === 0) {
+            throw new Error('Storage state contains no cookies or origins');
+          }
+          console.log(`Validated storage state structure (${state.cookies.length} cookies, ${state.origins.length} origins)`);
+          NODE
+
       - name: Start application
         run: |
           pnpm dev > "$RUNNER_TEMP/global-ai-coach.log" 2>&1 &
@@ -114,3 +131,7 @@ jobs:
             test-results/
             playwright-report/
           if-no-files-found: ignore
+
+      - name: Remove authenticated storage state
+        if: always()
+        run: rm -f "$RUNNER_TEMP/e2e-storage-state.json"

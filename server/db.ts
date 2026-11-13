@@ -659,6 +659,18 @@ export async function getReadinessScoreHistory(userId: number, limit = 24) {
 
 export type ActualReadinessOutcome = "passed" | "not-passed";
 
+export const DEFAULT_CALIBRATION_MINIMUM_SAMPLE_SIZE = 30;
+
+function getCalibrationMinimumSampleSize() {
+  const configured = Number.parseInt(
+    process.env.READINESS_MIN_CALIBRATION_SAMPLE_SIZE || "",
+    10
+  );
+  return Number.isFinite(configured) && configured > 0
+    ? Math.min(configured, 1000)
+    : DEFAULT_CALIBRATION_MINIMUM_SAMPLE_SIZE;
+}
+
 export function forecastMatchesOutcome(
   predictedStatus: string,
   actualOutcome: ActualReadinessOutcome
@@ -725,6 +737,7 @@ export async function recordReadinessOutcome(
 
 export async function getForecastAccuracy(userId: number) {
   const db = await getDb();
+  const minimumSampleSize = getCalibrationMinimumSampleSize();
   if (!db) {
     return {
       totalForecasts: 0,
@@ -733,6 +746,7 @@ export async function getForecastAccuracy(userId: number) {
       accuracyPercent: null,
       outcomes: [],
       calibration: [],
+      minimumSampleSize,
     };
   }
   const [histories, outcomes, standards] = await Promise.all([
@@ -819,6 +833,8 @@ export async function getForecastAccuracy(userId: number) {
       .map(bucket => ({
         ...bucket,
         accuracyPercent: Math.round((bucket.correct / bucket.total) * 100),
+        minimumSampleSize,
+        lowSample: bucket.total < minimumSampleSize,
       }))
       .sort((a, b) => b.total - a.total),
   };

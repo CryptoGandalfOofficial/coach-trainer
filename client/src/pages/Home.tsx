@@ -1854,7 +1854,10 @@ Open Atlas Readiness: ${window.location.href}`)}`;
               <Badge variant="secondary">
                 {forecastAccuracy.data?.accuracyPercent == null
                   ? "Awaiting outcomes"
-                  : `${forecastAccuracy.data.accuracyPercent}% accurate`}
+                  : forecastAccuracy.data.resolvedForecasts <
+                      (forecastAccuracy.data.minimumSampleSize || 30)
+                    ? "Directional estimate"
+                    : `${forecastAccuracy.data.accuracyPercent}% accurate`}
               </Badge>
             </div>
             <p className="mt-1 text-xs leading-5 text-slate-500">
@@ -1931,7 +1934,9 @@ Open Atlas Readiness: ${window.location.href}`)}`;
             </div>
             <p className="mt-2 text-[11px] text-slate-500">
               {forecastAccuracy.data?.resolvedForecasts || 0} of{" "}
-              {forecastAccuracy.data?.totalForecasts || 0} snapshots resolved
+              {forecastAccuracy.data?.totalForecasts || 0} snapshots resolved ·{" "}
+              {forecastAccuracy.data?.minimumSampleSize || 30} required for a
+              stable estimate
             </p>
             {forecastAccuracy.data?.calibration?.length ? (
               <div className="mt-4 border-t border-slate-100 pt-3">
@@ -1954,6 +1959,15 @@ Open Atlas Readiness: ${window.location.href}`)}`;
                       <span className="shrink-0 font-semibold text-slate-900">
                         {segment.accuracyPercent}% ({segment.total})
                       </span>
+                      {segment.lowSample ? (
+                        <span
+                          className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800"
+                          title={`Only ${segment.total} resolved forecasts; ${segment.minimumSampleSize} are required for a stable estimate. Treat this accuracy as directional.`}
+                        >
+                          Low sample ({segment.total}/
+                          {segment.minimumSampleSize})
+                        </span>
+                      ) : null}
                     </div>
                   ))}
                 </div>

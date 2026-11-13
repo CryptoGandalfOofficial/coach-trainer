@@ -109,6 +109,10 @@ temp/
 # Webdev artifacts (checkpoint zips, migrations, etc.)
 .webdev/
 
+# Playwright authentication state (contains session cookies)
+playwright/.auth/
+storage-state.json
+
 # Manus version file (auto-generated, not part of source)
 client/public/__manus__/version.json
 .project-config.json

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { forecastMatchesOutcome } from "./db";
+import {
+  DEFAULT_CALIBRATION_MINIMUM_SAMPLE_SIZE,
+  forecastMatchesOutcome,
+} from "./db";
 
 describe("Atlas Readiness schema repair", () => {
   it("records the fields required by target, source, and history queries", () => {
@@ -67,5 +70,22 @@ describe("Atlas Readiness schema repair", () => {
     );
     expect(scheduled).toContain("result.changes.map(change =>");
     expect(scheduled).toContain("notified");
+  });
+
+  it("uses an honest configurable minimum sample default", () => {
+    expect(DEFAULT_CALIBRATION_MINIMUM_SAMPLE_SIZE).toBe(30);
+    const database = readFileSync(
+      resolve(process.cwd(), "server/db.ts"),
+      "utf8"
+    );
+    const home = readFileSync(
+      resolve(process.cwd(), "client/src/pages/Home.tsx"),
+      "utf8"
+    );
+    expect(database).toContain("READINESS_MIN_CALIBRATION_SAMPLE_SIZE");
+    expect(database).toContain("lowSample: bucket.total < minimumSampleSize");
+    expect(home).toContain("Directional estimate");
+    expect(home).toContain("Low sample");
+    expect(home).toContain("segment.minimumSampleSize");
   });
 });
