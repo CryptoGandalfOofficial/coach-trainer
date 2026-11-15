@@ -110,6 +110,34 @@ export const targetSources = mysqlTable("target_sources", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export const targetSourceRefreshRuns = mysqlTable(
+  "target_source_refresh_runs",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    runId: varchar("runId", { length: 64 }).notNull().unique(),
+    triggerType: varchar("triggerType", { length: 32 }).notNull(),
+    status: varchar("status", { length: 32 }).notNull(),
+    startedAt: timestamp("startedAt").defaultNow().notNull(),
+    completedAt: timestamp("completedAt"),
+    checked: int("checked").default(0).notNull(),
+    changed: int("changed").default(0).notNull(),
+    errors: int("errors").default(0).notNull(),
+    skipped: int("skipped").default(0).notNull(),
+    errorMessage: text("errorMessage"),
+    lastSuccessfulRefreshAt: timestamp("lastSuccessfulRefreshAt"),
+  }
+);
+
+export const targetSourceRefreshLocks = mysqlTable(
+  "target_source_refresh_locks",
+  {
+    lockKey: varchar("lockKey", { length: 64 }).primaryKey(),
+    runId: varchar("runId", { length: 64 }),
+    lockedUntil: timestamp("lockedUntil"),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  }
+);
+
 export const targetSourceReviews = mysqlTable("target_source_reviews", {
   id: int("id").autoincrement().primaryKey(),
   sourceId: int("sourceId")

@@ -20,6 +20,8 @@ import {
   getReadinessScore,
   getReadinessScoreHistory,
   getForecastAccuracy,
+  getSourceRefreshRuns,
+  getSourceRefreshStatus,
   getTargetSourceReviewHistory,
   getTargetStandard,
   getTargetSources,
@@ -757,8 +759,12 @@ export const appRouter = router({
       createWeeklySummaries()
     ),
     refreshTargetSources: adminProcedure.mutation(() =>
-      refreshApprovedTargetSources()
+      refreshApprovedTargetSources("manual")
     ),
+    sourceRefreshStatus: adminProcedure.query(() => getSourceRefreshStatus()),
+    sourceRefreshRuns: adminProcedure
+      .input(z.object({ limit: z.number().int().min(1).max(100).default(20) }))
+      .query(({ input }) => getSourceRefreshRuns(input.limit)),
   }),
 });
 

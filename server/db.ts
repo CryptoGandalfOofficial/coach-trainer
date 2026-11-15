@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { createHash, randomUUID } from "node:crypto";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { ENV } from "./_core/env";
 import {
@@ -10,6 +10,8 @@ import {
   targetStandards,
   targetStandardVersions,
   targetSources,
+  targetSourceRefreshLocks,
+  targetSourceRefreshRuns,
   targetSourceReviews,
   readinessScoreHistory,
   readinessForecastOutcomes,
@@ -444,9 +446,158 @@ export async function getTargetSourceReviewHistory(userId: number) {
   return reviews.filter(review => sourceIds.has(review.sourceId));
 }
 
-export async function refreshApprovedTargetSources() {
+const SOURCE_REFRESH_LOCK_KEY = "approved-source-refresh";
+const SOURCE_REFRESH_LEASE_MS = 2 * 60 * 1000;
+
+export type SourceRefreshRunStatus =
+  | "running"
+  | "succeeded"
+  | "partial"
+  | "failed"
+  | "skipped";
+
+export type SourceRefreshResult = {
+  runId: string;
+  status: SourceRefreshRunStatus | "unavailable";
+  triggerType: string;
+  startedAt: Date;
+  completedAt: Date | null;
+  checked: number;
+  changed: number;
+  errors: number;
+  skipped: number;
+  changes: Array<{ id: number; title: string; url: string }>;
+  lastSuccessfulRefreshAt: Date | null;
+};
+
+export function isSourceRefreshLeaseAvailable(
+  lockedUntil: Date | null | undefined,
+  now: Date
+) {
+  return !lockedUntil || lockedUntil.getTime() < now.getTime();
+}
+
+export function reconcileSourceRefreshCounts(
+  sourceCount: number,
+  checked: number,
+  errors: number
+) {
+  return {
+    checked: Math.max(0, checked),
+    errors: Math.max(0, errors),
+    skipped: Math.max(0, sourceCount - checked - errors),
+  };
+}
+
+export function getSourceRefreshStatusForCounts(
+  checked: number,
+  errors: number
+): Extract<SourceRefreshRunStatus, "partial" | "succeeded"> {
+  void checked;
+  return errors > 0 ? "partial" : "succeeded";
+}
+
+async function getLastSuccessfulRefreshAt(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>
+) {
+  const latest = await db
+    .select({
+      lastSuccessfulRefreshAt: targetSourceRefreshRuns.lastSuccessfulRefreshAt,
+    })
+    .from(targetSourceRefreshRuns)
+    .where(eq(targetSourceRefreshRuns.status, "succeeded"))
+    .orderBy(desc(targetSourceRefreshRuns.completedAt))
+    .limit(1);
+  return latest[0]?.lastSuccessfulRefreshAt || null;
+}
+
+async function acquireSourceRefreshLease(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  runId: string,
+  now: Date,
+  lockedUntil: Date
+) {
+  try {
+    await db.insert(targetSourceRefreshLocks).values({
+      lockKey: SOURCE_REFRESH_LOCK_KEY,
+      runId: null,
+      lockedUntil: new Date(0),
+    });
+  } catch {
+    // Another instance may have created the singleton row first.
+  }
+  const result = await db.execute(sql`
+    UPDATE target_source_refresh_locks
+    SET runId = ${runId}, lockedUntil = ${lockedUntil}, updatedAt = ${now}
+    WHERE lockKey = ${SOURCE_REFRESH_LOCK_KEY}
+      AND (lockedUntil IS NULL OR lockedUntil < ${now})
+  `);
+  return result[0].affectedRows === 1;
+}
+
+async function releaseSourceRefreshLease(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  runId: string
+) {
+  await db
+    .update(targetSourceRefreshLocks)
+    .set({ runId: null, lockedUntil: new Date(0) })
+    .where(
+      and(
+        eq(targetSourceRefreshLocks.lockKey, SOURCE_REFRESH_LOCK_KEY),
+        eq(targetSourceRefreshLocks.runId, runId)
+      )
+    );
+}
+
+export async function refreshApprovedTargetSources(
+  triggerType = "scheduled"
+): Promise<SourceRefreshResult> {
+  const runId = randomUUID();
+  const startedAt = new Date();
   const db = await getDb();
-  if (!db) return { checked: 0, changed: 0, errors: 0, changes: [] };
+  if (!db) {
+    return {
+      runId,
+      status: "unavailable",
+      triggerType,
+      startedAt,
+      completedAt: new Date(),
+      checked: 0,
+      changed: 0,
+      errors: 1,
+      skipped: 0,
+      changes: [],
+      lastSuccessfulRefreshAt: null,
+    };
+  }
+  const acquired = await acquireSourceRefreshLease(
+    db,
+    runId,
+    startedAt,
+    new Date(startedAt.getTime() + SOURCE_REFRESH_LEASE_MS)
+  );
+  if (!acquired) {
+    return {
+      runId,
+      status: "skipped",
+      triggerType,
+      startedAt,
+      completedAt: new Date(),
+      checked: 0,
+      changed: 0,
+      errors: 0,
+      skipped: 1,
+      changes: [],
+      lastSuccessfulRefreshAt: await getLastSuccessfulRefreshAt(db),
+    };
+  }
+  await db.insert(targetSourceRefreshRuns).values({
+    runId,
+    triggerType,
+    status: "running",
+    startedAt,
+  });
   const sources = await db
     .select()
     .from(targetSources)
@@ -455,52 +606,132 @@ export async function refreshApprovedTargetSources() {
   let checked = 0;
   let changed = 0;
   let errors = 0;
+  let skipped = 0;
   const changes: Array<{ id: number; title: string; url: string }> = [];
-  for (const source of sources) {
-    try {
-      const response = await fetch(source.url, {
-        signal: AbortSignal.timeout(8000),
-        headers: { Accept: "text/html,text/plain" },
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const raw = (await response.text()).slice(0, 20000);
-      const excerpt = raw
-        .replace(/<script[\s\S]*?<\/script>/gi, " ")
-        .replace(/<style[\s\S]*?<\/style>/gi, " ")
-        .replace(/<[^>]+>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 4000);
-      const contentHash = createHash("sha256").update(excerpt).digest("hex");
-      const isChanged = Boolean(
-        source.contentHash && source.contentHash !== contentHash
-      );
-      await db
-        .update(targetSources)
-        .set({
-          contentExcerpt: excerpt,
-          contentHash,
-          fetchedAt: new Date(),
-          changeStatus: isChanged ? "changed" : "stable",
-          lastChangedAt: isChanged ? new Date() : source.lastChangedAt,
-          status: isChanged ? "pending_review" : source.status,
-          updatedAt: new Date(),
-        })
-        .where(eq(targetSources.id, source.id));
-      checked += 1;
-      if (isChanged) {
-        changed += 1;
-        changes.push({
-          id: source.id,
-          title: source.title || source.publisher || source.url,
-          url: source.url,
+  try {
+    for (const source of sources) {
+      try {
+        const response = await fetch(source.url, {
+          signal: AbortSignal.timeout(8000),
+          headers: { Accept: "text/html,text/plain" },
         });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const raw = (await response.text()).slice(0, 20000);
+        const excerpt = raw
+          .replace(/<script[\s\S]*?<\/script>/gi, " ")
+          .replace(/<style[\s\S]*?<\/style>/gi, " ")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 4000);
+        const contentHash = createHash("sha256").update(excerpt).digest("hex");
+        const isChanged = Boolean(
+          source.contentHash && source.contentHash !== contentHash
+        );
+        await db
+          .update(targetSources)
+          .set({
+            contentExcerpt: excerpt,
+            contentHash,
+            fetchedAt: new Date(),
+            changeStatus: isChanged ? "changed" : "stable",
+            lastChangedAt: isChanged ? new Date() : source.lastChangedAt,
+            status: isChanged ? "pending_review" : source.status,
+            updatedAt: new Date(),
+          })
+          .where(eq(targetSources.id, source.id));
+        checked += 1;
+        if (isChanged) {
+          changed += 1;
+          changes.push({
+            id: source.id,
+            title: source.title || source.publisher || source.url,
+            url: source.url,
+          });
+        }
+      } catch {
+        errors += 1;
       }
-    } catch {
-      errors += 1;
     }
+    skipped = reconcileSourceRefreshCounts(
+      sources.length,
+      checked,
+      errors
+    ).skipped;
+    const completedAt = new Date();
+    const status = getSourceRefreshStatusForCounts(checked, errors);
+    const lastSuccessfulRefreshAt =
+      status === "succeeded"
+        ? completedAt
+        : await getLastSuccessfulRefreshAt(db);
+    await db
+      .update(targetSourceRefreshRuns)
+      .set({
+        status,
+        completedAt,
+        checked,
+        changed,
+        errors,
+        skipped,
+        lastSuccessfulRefreshAt: status === "succeeded" ? completedAt : null,
+      })
+      .where(eq(targetSourceRefreshRuns.runId, runId));
+    return {
+      runId,
+      status,
+      triggerType,
+      startedAt,
+      completedAt,
+      checked,
+      changed,
+      errors,
+      skipped,
+      changes,
+      lastSuccessfulRefreshAt,
+    };
+  } catch (error) {
+    const completedAt = new Date();
+    await db
+      .update(targetSourceRefreshRuns)
+      .set({
+        status: "failed",
+        completedAt,
+        checked,
+        changed,
+        errors: Math.max(1, errors),
+        skipped,
+        errorMessage:
+          error instanceof Error ? error.message.slice(0, 2000) : String(error),
+      })
+      .where(eq(targetSourceRefreshRuns.runId, runId));
+    throw error;
+  } finally {
+    await releaseSourceRefreshLease(db, runId);
   }
-  return { checked, changed, errors, changes };
+}
+
+export async function getSourceRefreshStatus() {
+  const db = await getDb();
+  if (!db) return { latestRun: null, lastSuccessfulRefreshAt: null };
+  const [latestRun] = await db
+    .select()
+    .from(targetSourceRefreshRuns)
+    .orderBy(desc(targetSourceRefreshRuns.startedAt))
+    .limit(1);
+  return {
+    latestRun: latestRun || null,
+    lastSuccessfulRefreshAt: await getLastSuccessfulRefreshAt(db),
+  };
+}
+
+export async function getSourceRefreshRuns(limit = 20) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(targetSourceRefreshRuns)
+    .orderBy(desc(targetSourceRefreshRuns.startedAt))
+    .limit(Math.min(Math.max(limit, 1), 100));
 }
 
 export async function getReadinessScore(userId: number) {

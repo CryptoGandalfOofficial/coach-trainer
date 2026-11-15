@@ -25,14 +25,14 @@ export async function targetSourceRefreshHandler(req: Request, res: Response) {
     const user = await sdk.authenticateRequest(req);
     if (!user.isCron || !user.taskUid)
       return res.status(403).json({ error: "cron-only" });
-    const result = await refreshApprovedTargetSources();
+    const result = await refreshApprovedTargetSources("cron");
     let notified = false;
     if (result.changed > 0) {
       notified = await notifyOwner({
         title: "Atlas Readiness source changes detected",
         content: [
           `${result.changed} approved official source(s) changed and were moved to pending review.`,
-          `Checked: ${result.checked}; errors: ${result.errors}.`,
+          `Run: ${result.runId}; checked: ${result.checked}; errors: ${result.errors}.`,
           ...result.changes.map(change => `• ${change.title}: ${change.url}`),
         ].join("\n"),
       }).catch(error => {
