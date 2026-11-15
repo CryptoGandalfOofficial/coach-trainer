@@ -318,6 +318,14 @@ export default function Home() {
     enabled: user?.role === "admin",
     retry: false,
   });
+  const sourceRefreshStatus = trpc.scheduled.sourceRefreshStatus.useQuery(
+    undefined,
+    { enabled: user?.role === "admin", retry: false }
+  );
+  const sourceRefreshRuns = trpc.scheduled.sourceRefreshRuns.useQuery(
+    { limit: 12 },
+    { enabled: user?.role === "admin", retry: false }
+  );
   const profileSave = trpc.profile.save.useMutation({
     onSuccess: () => void progressQuery.refetch(),
   });
@@ -2473,13 +2481,25 @@ Open Atlas Readiness: ${window.location.href}`)}`;
         </div>
       </section>
       {user?.role === "admin" && analyticsSummary.data && (
-        <AdminAnalytics data={analyticsSummary.data} />
+        <AdminAnalytics
+          data={analyticsSummary.data}
+          refreshStatus={sourceRefreshStatus.data}
+          refreshRuns={sourceRefreshRuns.data}
+        />
       )}
     </main>
   );
 }
 
-function AdminAnalytics({ data }: { data: AnalyticsData }) {
+function AdminAnalytics({
+  data,
+  refreshStatus,
+  refreshRuns,
+}: {
+  data: AnalyticsData;
+  refreshStatus?: SourceRefreshStatus;
+  refreshRuns?: SourceRefreshRun[];
+}) {
   const skills = Array.from(new Set(data.skillTrends.map(item => item.skill)));
   const latestBySkill = skills
     .map(
@@ -2510,6 +2530,7 @@ function AdminAnalytics({ data }: { data: AnalyticsData }) {
             value={String(data.retentionCohorts.length)}
           />
         </div>
+        <SourceRefreshHistory status={refreshStatus} runs={refreshRuns || []} />
         <div className="mt-6 grid gap-6 lg:grid-cols-3">
           <Card>
             <CardHeader>
@@ -3002,6 +3023,117 @@ function AnalyticsExportButton() {
   );
 }
 
+function SourceRefreshHistory({
+  status,
+  runs,
+}: {
+  status?: SourceRefreshStatus;
+  runs: SourceRefreshRun[];
+}) {
+  return (
+    <Card className="mt-6 overflow-hidden">
+      <CardHeader className="border-b border-slate-200 bg-white">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <CardTitle className="text-xl">
+              Official-source refresh history
+            </CardTitle>
+            <CardDescription>
+              Durable execution evidence for source monitoring. A skipped run
+              means another instance held the lease.
+            </CardDescription>
+          </div>
+          <Badge
+            variant={
+              status?.latestRun?.status === "succeeded"
+                ? "secondary"
+                : "outline"
+            }
+          >
+            {status?.latestRun?.status || "No runs"}
+          </Badge>
+        </div>
+        <p className="pt-2 text-sm text-slate-600">
+          Last fully successful refresh:{" "}
+          {formatRefreshDate(status?.lastSuccessfulRefreshAt)}
+        </p>
+      </CardHeader>
+      <CardContent className="p-0">
+        {runs.length === 0 ? (
+          <p className="p-6 text-sm text-slate-600">
+            No refresh executions have been recorded yet.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <caption className="sr-only">
+                Recent official-source refresh executions
+              </caption>
+              <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                <tr>
+                  <th scope="col" className="px-6 py-3">
+                    Run
+                  </th>
+                  <th scope="col" className="px-4 py-3">
+                    Status
+                  </th>
+                  <th scope="col" className="px-4 py-3">
+                    Started
+                  </th>
+                  <th scope="col" className="px-4 py-3">
+                    Checked
+                  </th>
+                  <th scope="col" className="px-4 py-3">
+                    Changed
+                  </th>
+                  <th scope="col" className="px-4 py-3">
+                    Errors
+                  </th>
+                  <th scope="col" className="px-6 py-3">
+                    Skipped
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {runs.map(run => (
+                  <tr key={run.runId} className="text-slate-700">
+                    <td className="px-6 py-3 font-mono text-xs">
+                      <span className="block">{run.runId.slice(0, 12)}…</span>
+                      <span className="text-slate-400">{run.triggerType}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge
+                        variant={
+                          run.status === "succeeded" ? "secondary" : "outline"
+                        }
+                      >
+                        {run.status}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      {formatRefreshDate(run.startedAt)}
+                    </td>
+                    <td className="px-4 py-3">{run.checked}</td>
+                    <td className="px-4 py-3">{run.changed}</td>
+                    <td className="px-4 py-3">{run.errors}</td>
+                    <td className="px-6 py-3">{run.skipped}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function formatRefreshDate(value?: Date | string | null) {
+  if (!value) return "Not recorded";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Unknown" : date.toLocaleString();
+}
+
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <Card>
@@ -3043,6 +3175,23 @@ type AnalyticsData = {
     technical: number;
     timeManagement: number;
   }>;
+};
+type SourceRefreshRun = {
+  runId: string;
+  triggerType: string;
+  status: string;
+  startedAt: Date | string;
+  completedAt: Date | string | null;
+  checked: number;
+  changed: number;
+  errors: number;
+  skipped: number;
+  errorMessage: string | null;
+  lastSuccessfulRefreshAt: Date | string | null;
+};
+type SourceRefreshStatus = {
+  latestRun: SourceRefreshRun | null;
+  lastSuccessfulRefreshAt: Date | string | null;
 };
 type RecommendedModule = {
   title: string;
