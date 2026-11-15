@@ -1,0 +1,1753 @@
+import { createHash, randomUUID } from "node:crypto";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/mysql2";
+import { ENV } from "./_core/env";
+import {
+  coachingSessions,
+  coachProfiles,
+  interactionEvents,
+  practiceAttempts,
+  targetStandards,
+  targetStandardVersions,
+  targetSources,
+  targetSourceRefreshLocks,
+  targetSourceRefreshRuns,
+  targetSourceReviews,
+  readinessScoreHistory,
+  readinessForecastOutcomes,
+  users,
+  weeklySummaries,
+  type InsertUser,
+} from "../drizzle/schema";
+
+let _db: ReturnType<typeof drizzle> | null = null;
+
+export async function getDb() {
+  if (!_db && process.env.DATABASE_URL) {
+    try {
+      _db = drizzle(process.env.DATABASE_URL);
+    } catch (error) {
+      console.warn("[Database] Failed to connect:", error);
+      _db = null;
+    }
+  }
+  return _db;
+}
+
+export async function upsertUser(user: InsertUser): Promise<void> {
+  if (!user.openId) throw new Error("User openId is required for upsert");
+  const db = await getDb();
+  if (!db) return;
+  const values: InsertUser = { openId: user.openId };
+  const updateSet: Record<string, unknown> = {};
+  for (const field of ["name", "email", "loginMethod"] as const) {
+    if (user[field] !== undefined) {
+      values[field] = user[field] ?? null;
+      updateSet[field] = user[field] ?? null;
+    }
+  }
+  values.lastSignedIn = user.lastSignedIn ?? new Date();
+  updateSet.lastSignedIn = values.lastSignedIn;
+  if (user.role !== undefined) {
+    values.role = user.role;
+    updateSet.role = user.role;
+  } else if (user.openId === ENV.ownerOpenId) {
+    values.role = "admin";
+    updateSet.role = "admin";
+  }
+  await db
+    .insert(users)
+    .values(values)
+    .onDuplicateKeyUpdate({ set: updateSet });
+}
+
+export async function getUserByOpenId(openId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.openId, openId))
+    .limit(1);
+  return result[0];
+}
+
+export async function upsertCoachProfile(
+  userId: number,
+  input: {
+    preferredLanguage?: string;
+    country?: string;
+    targetRole?: string;
+    experienceLevel?: string;
+    weeklyMinutes?: number;
+    preferredModuleDifficulty?: string;
+    preferredModuleDuration?: number;
+    savedDateRanges?: string;
+  }
+) {
+  const db = await getDb();
+  if (!db) return undefined;
+  await db
+    .insert(coachProfiles)
+    .values({ userId, ...input })
+    .onDuplicateKeyUpdate({ set: { ...input, updatedAt: new Date() } });
+  const result = await db
+    .select()
+    .from(coachProfiles)
+    .where(eq(coachProfiles.userId, userId))
+    .limit(1);
+  return result[0];
+}
+
+export async function getCoachProfile(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db
+    .select()
+    .from(coachProfiles)
+    .where(eq(coachProfiles.userId, userId))
+    .limit(1);
+  return result[0];
+}
+
+export type TargetStandardInput = {
+  outcomeType: string;
+  targetName: string;
+  evaluator?: string;
+  jurisdiction?: string;
+  targetDate?: string;
+  language?: string;
+  format?: string;
+  sourceUrl?: string;
+  notes?: string;
+  rubricCriteria?: Array<{
+    id: string;
+    label: string;
+    weight: number;
+    targetScore: number;
+  }>;
+  changeNote?: string;
+};
+
+const moduleForCriterion = (criterion: { id: string; label: string }) => {
+  const catalog: Record<
+    string,
+    { title: string; drill: string; duration: number }
+  > = {
+    clarity: {
+      title: "Structured response lab",
+      drill:
+        "Answer with a clear claim, three supporting points, and a concise close.",
+      duration: 20,
+    },
+    evidence: {
+      title: "Evidence and correctness sprint",
+      drill:
+        "Complete one timed drill and cite the reasoning or evidence behind every conclusion.",
+      duration: 30,
+    },
+    judgment: {
+      title: "Trade-off decision studio",
+      drill:
+        "Compare two viable approaches and state the decision, risk, and fallback.",
+      duration: 25,
+    },
+    communication: {
+      title: "Pressure communication rehearsal",
+      drill:
+        "Deliver a two-minute answer aloud, then improve pacing and specificity.",
+      duration: 15,
+    },
+  };
+  return {
+    criterionId: criterion.id,
+    criterionLabel: criterion.label,
+    ...(catalog[criterion.id] || {
+      title: `${criterion.label} practice drill`,
+      drill: `Complete a focused ${criterion.label.toLowerCase()} exercise and request targeted feedback.`,
+      duration: 20,
+    }),
+  };
+};
+
+export async function getTargetStandard(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select()
+    .from(targetStandards)
+    .where(eq(targetStandards.userId, userId))
+    .limit(1);
+  return result[0] ?? null;
+}
+
+export async function upsertTargetStandard(
+  userId: number,
+  input: TargetStandardInput
+) {
+  const db = await getDb();
+  if (!db) return null;
+  const existing = await getTargetStandard(userId);
+  const currentVersion = existing
+    ? Number.parseInt(existing.version.replace(/^v/, ""), 10) || 1
+    : 0;
+  const nextVersion = currentVersion + 1;
+  const rubricCriteria = input.rubricCriteria?.length
+    ? input.rubricCriteria
+    : [
+        {
+          id: "clarity",
+          label: "Clarity and structure",
+          weight: 25,
+          targetScore: 8,
+        },
+        {
+          id: "evidence",
+          label: "Evidence and correctness",
+          weight: 30,
+          targetScore: 8,
+        },
+        {
+          id: "judgment",
+          label: "Judgment and trade-offs",
+          weight: 25,
+          targetScore: 8,
+        },
+        {
+          id: "communication",
+          label: "Communication under pressure",
+          weight: 20,
+          targetScore: 8,
+        },
+      ];
+  const values = {
+    userId,
+    outcomeType: input.outcomeType,
+    targetName: input.targetName,
+    evaluator: input.evaluator || null,
+    jurisdiction: input.jurisdiction || null,
+    targetDate: input.targetDate
+      ? new Date(`${input.targetDate}T00:00:00.000Z`)
+      : null,
+    language: input.language || "en",
+    format: input.format || null,
+    sourceUrl: input.sourceUrl || null,
+    notes: input.notes || null,
+    version: `v${nextVersion}`,
+    rubricCriteria: JSON.stringify(rubricCriteria),
+    rubricModules: JSON.stringify(rubricCriteria.map(moduleForCriterion)),
+    reviewStatus: existing?.reviewStatus || "draft",
+  };
+  const { userId: _userId, ...updateValues } = values;
+  await db
+    .insert(targetStandards)
+    .values(values)
+    .onDuplicateKeyUpdate({
+      set: { ...updateValues, updatedAt: new Date() },
+    });
+  const saved = await getTargetStandard(userId);
+  if (saved) {
+    await db.insert(targetStandardVersions).values({
+      targetStandardId: saved.id,
+      versionNumber: nextVersion,
+      snapshot: JSON.stringify({
+        ...saved,
+        targetDate: saved.targetDate?.toISOString() || null,
+      }),
+      changeNote:
+        input.changeNote ||
+        (existing ? "Target Standard updated" : "Initial Target Standard"),
+    });
+  }
+  return saved;
+}
+
+export async function getTargetStandardVersions(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const standard = await getTargetStandard(userId);
+  if (!standard) return [];
+  return db
+    .select()
+    .from(targetStandardVersions)
+    .where(eq(targetStandardVersions.targetStandardId, standard.id))
+    .orderBy(desc(targetStandardVersions.versionNumber));
+}
+
+export async function getTargetSources(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const standard = await getTargetStandard(userId);
+  if (!standard) return [];
+  return db
+    .select()
+    .from(targetSources)
+    .where(eq(targetSources.targetStandardId, standard.id))
+    .orderBy(desc(targetSources.createdAt));
+}
+
+export async function ingestTargetSource(
+  userId: number,
+  input: { url: string; jurisdiction?: string; sourceType?: string }
+) {
+  const db = await getDb();
+  if (!db) return null;
+  const standard = await getTargetStandard(userId);
+  if (!standard)
+    throw new Error("Save a Target Standard before adding sources");
+  const parsed = new URL(input.url);
+  if (
+    !["http:", "https:"].includes(parsed.protocol) ||
+    /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(parsed.hostname)
+  ) {
+    throw new Error("Only public HTTP(S) source URLs are allowed");
+  }
+  const response = await fetch(parsed.toString(), {
+    signal: AbortSignal.timeout(8000),
+    headers: { Accept: "text/html,text/plain" },
+  });
+  if (!response.ok) throw new Error(`Source returned ${response.status}`);
+  const raw = (await response.text()).slice(0, 20000);
+  const title =
+    raw
+      .match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]
+      ?.replace(/\s+/g, " ")
+      .trim() || parsed.hostname;
+  const excerpt = raw
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 4000);
+  const contentHash = createHash("sha256").update(excerpt).digest("hex");
+  const previous = (
+    await db
+      .select()
+      .from(targetSources)
+      .where(
+        and(
+          eq(targetSources.targetStandardId, standard.id),
+          eq(targetSources.url, parsed.toString())
+        )
+      )
+      .orderBy(desc(targetSources.createdAt))
+      .limit(1)
+  )[0];
+  const changed = Boolean(
+    previous?.contentHash && previous.contentHash !== contentHash
+  );
+  if (previous) {
+    await db
+      .update(targetSources)
+      .set({
+        title,
+        publisher: parsed.hostname,
+        contentExcerpt: excerpt,
+        contentHash,
+        fetchedAt: new Date(),
+        changeStatus: changed ? "changed" : "stable",
+        lastChangedAt: changed ? new Date() : previous.lastChangedAt,
+        status:
+          changed && previous.status === "approved"
+            ? "pending_review"
+            : previous.status,
+        updatedAt: new Date(),
+      })
+      .where(eq(targetSources.id, previous.id));
+  } else {
+    await db.insert(targetSources).values({
+      targetStandardId: standard.id,
+      jurisdiction: input.jurisdiction || standard.jurisdiction || null,
+      url: parsed.toString(),
+      title,
+      publisher: parsed.hostname,
+      sourceType: input.sourceType || "official",
+      contentExcerpt: excerpt,
+      contentHash,
+      status: "pending_review",
+      changeStatus: "stable",
+      fetchedAt: new Date(),
+    });
+  }
+  const sources = await getTargetSources(userId);
+  return sources[0] || null;
+}
+
+export async function reviewTargetSource(
+  userId: number,
+  sourceId: number,
+  status: "approved" | "rejected",
+  reviewNotes?: string
+) {
+  const db = await getDb();
+  if (!db) return null;
+  const standard = await getTargetStandard(userId);
+  if (!standard) return null;
+  const source = (
+    await db
+      .select()
+      .from(targetSources)
+      .where(
+        and(
+          eq(targetSources.id, sourceId),
+          eq(targetSources.targetStandardId, standard.id)
+        )
+      )
+      .limit(1)
+  )[0];
+  if (!source) return null;
+  await db
+    .update(targetSources)
+    .set({
+      status,
+      reviewNotes: reviewNotes || null,
+      reviewedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(targetSources.id, sourceId),
+        eq(targetSources.targetStandardId, standard.id)
+      )
+    );
+  await db.insert(targetSourceReviews).values({
+    sourceId,
+    reviewerUserId: userId,
+    previousStatus: source.status,
+    status,
+    reviewNotes: reviewNotes || null,
+  });
+  await db
+    .update(targetStandards)
+    .set({
+      reviewStatus: status === "approved" ? "reviewed" : "draft",
+      lastReviewedAt: status === "approved" ? new Date() : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(targetStandards.id, standard.id));
+  const sources = await getTargetSources(userId);
+  return sources.find(source => source.id === sourceId) || null;
+}
+
+export async function getTargetSourceReviewHistory(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const standard = await getTargetStandard(userId);
+  if (!standard) return [];
+  const sources = await getTargetSources(userId);
+  if (!sources.length) return [];
+  const sourceIds = new Set(sources.map(source => source.id));
+  const reviews = await db
+    .select()
+    .from(targetSourceReviews)
+    .orderBy(desc(targetSourceReviews.reviewedAt))
+    .limit(200);
+  return reviews.filter(review => sourceIds.has(review.sourceId));
+}
+
+const SOURCE_REFRESH_LOCK_KEY = "approved-source-refresh";
+const SOURCE_REFRESH_LEASE_MS = 2 * 60 * 1000;
+
+export type SourceRefreshRunStatus =
+  | "running"
+  | "succeeded"
+  | "partial"
+  | "failed"
+  | "skipped";
+
+export type SourceRefreshResult = {
+  runId: string;
+  status: SourceRefreshRunStatus | "unavailable";
+  triggerType: string;
+  startedAt: Date;
+  completedAt: Date | null;
+  checked: number;
+  changed: number;
+  errors: number;
+  skipped: number;
+  changes: Array<{ id: number; title: string; url: string }>;
+  lastSuccessfulRefreshAt: Date | null;
+};
+
+export function isSourceRefreshLeaseAvailable(
+  lockedUntil: Date | null | undefined,
+  now: Date
+) {
+  return !lockedUntil || lockedUntil.getTime() < now.getTime();
+}
+
+export function reconcileSourceRefreshCounts(
+  sourceCount: number,
+  checked: number,
+  errors: number
+) {
+  return {
+    checked: Math.max(0, checked),
+    errors: Math.max(0, errors),
+    skipped: Math.max(0, sourceCount - checked - errors),
+  };
+}
+
+export function getSourceRefreshStatusForCounts(
+  checked: number,
+  errors: number
+): Extract<SourceRefreshRunStatus, "partial" | "succeeded"> {
+  void checked;
+  return errors > 0 ? "partial" : "succeeded";
+}
+
+async function getLastSuccessfulRefreshAt(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>
+) {
+  const latest = await db
+    .select({
+      lastSuccessfulRefreshAt: targetSourceRefreshRuns.lastSuccessfulRefreshAt,
+    })
+    .from(targetSourceRefreshRuns)
+    .where(eq(targetSourceRefreshRuns.status, "succeeded"))
+    .orderBy(desc(targetSourceRefreshRuns.completedAt))
+    .limit(1);
+  return latest[0]?.lastSuccessfulRefreshAt || null;
+}
+
+async function acquireSourceRefreshLease(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  runId: string,
+  now: Date,
+  lockedUntil: Date
+) {
+  try {
+    await db.insert(targetSourceRefreshLocks).values({
+      lockKey: SOURCE_REFRESH_LOCK_KEY,
+      runId: null,
+      lockedUntil: new Date(0),
+    });
+  } catch {
+    // Another instance may have created the singleton row first.
+  }
+  const result = await db.execute(sql`
+    UPDATE target_source_refresh_locks
+    SET runId = ${runId}, lockedUntil = ${lockedUntil}, updatedAt = ${now}
+    WHERE lockKey = ${SOURCE_REFRESH_LOCK_KEY}
+      AND (lockedUntil IS NULL OR lockedUntil < ${now})
+  `);
+  return result[0].affectedRows === 1;
+}
+
+async function releaseSourceRefreshLease(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  runId: string
+) {
+  await db
+    .update(targetSourceRefreshLocks)
+    .set({ runId: null, lockedUntil: new Date(0) })
+    .where(
+      and(
+        eq(targetSourceRefreshLocks.lockKey, SOURCE_REFRESH_LOCK_KEY),
+        eq(targetSourceRefreshLocks.runId, runId)
+      )
+    );
+}
+
+export async function refreshApprovedTargetSources(
+  triggerType = "scheduled"
+): Promise<SourceRefreshResult> {
+  const runId = randomUUID();
+  const startedAt = new Date();
+  const db = await getDb();
+  if (!db) {
+    return {
+      runId,
+      status: "unavailable",
+      triggerType,
+      startedAt,
+      completedAt: new Date(),
+      checked: 0,
+      changed: 0,
+      errors: 1,
+      skipped: 0,
+      changes: [],
+      lastSuccessfulRefreshAt: null,
+    };
+  }
+  const acquired = await acquireSourceRefreshLease(
+    db,
+    runId,
+    startedAt,
+    new Date(startedAt.getTime() + SOURCE_REFRESH_LEASE_MS)
+  );
+  if (!acquired) {
+    return {
+      runId,
+      status: "skipped",
+      triggerType,
+      startedAt,
+      completedAt: new Date(),
+      checked: 0,
+      changed: 0,
+      errors: 0,
+      skipped: 1,
+      changes: [],
+      lastSuccessfulRefreshAt: await getLastSuccessfulRefreshAt(db),
+    };
+  }
+  await db.insert(targetSourceRefreshRuns).values({
+    runId,
+    triggerType,
+    status: "running",
+    startedAt,
+  });
+  const sources = await db
+    .select()
+    .from(targetSources)
+    .where(eq(targetSources.status, "approved"))
+    .limit(1000);
+  let checked = 0;
+  let changed = 0;
+  let errors = 0;
+  let skipped = 0;
+  const changes: Array<{ id: number; title: string; url: string }> = [];
+  try {
+    for (const source of sources) {
+      try {
+        const response = await fetch(source.url, {
+          signal: AbortSignal.timeout(8000),
+          headers: { Accept: "text/html,text/plain" },
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const raw = (await response.text()).slice(0, 20000);
+        const excerpt = raw
+          .replace(/<script[\s\S]*?<\/script>/gi, " ")
+          .replace(/<style[\s\S]*?<\/style>/gi, " ")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 4000);
+        const contentHash = createHash("sha256").update(excerpt).digest("hex");
+        const isChanged = Boolean(
+          source.contentHash && source.contentHash !== contentHash
+        );
+        await db
+          .update(targetSources)
+          .set({
+            contentExcerpt: excerpt,
+            contentHash,
+            fetchedAt: new Date(),
+            changeStatus: isChanged ? "changed" : "stable",
+            lastChangedAt: isChanged ? new Date() : source.lastChangedAt,
+            status: isChanged ? "pending_review" : source.status,
+            updatedAt: new Date(),
+          })
+          .where(eq(targetSources.id, source.id));
+        checked += 1;
+        if (isChanged) {
+          changed += 1;
+          changes.push({
+            id: source.id,
+            title: source.title || source.publisher || source.url,
+            url: source.url,
+          });
+        }
+      } catch {
+        errors += 1;
+      }
+    }
+    skipped = reconcileSourceRefreshCounts(
+      sources.length,
+      checked,
+      errors
+    ).skipped;
+    const completedAt = new Date();
+    const status = getSourceRefreshStatusForCounts(checked, errors);
+    const lastSuccessfulRefreshAt =
+      status === "succeeded"
+        ? completedAt
+        : await getLastSuccessfulRefreshAt(db);
+    await db
+      .update(targetSourceRefreshRuns)
+      .set({
+        status,
+        completedAt,
+        checked,
+        changed,
+        errors,
+        skipped,
+        lastSuccessfulRefreshAt: status === "succeeded" ? completedAt : null,
+      })
+      .where(eq(targetSourceRefreshRuns.runId, runId));
+    return {
+      runId,
+      status,
+      triggerType,
+      startedAt,
+      completedAt,
+      checked,
+      changed,
+      errors,
+      skipped,
+      changes,
+      lastSuccessfulRefreshAt,
+    };
+  } catch (error) {
+    const completedAt = new Date();
+    await db
+      .update(targetSourceRefreshRuns)
+      .set({
+        status: "failed",
+        completedAt,
+        checked,
+        changed,
+        errors: Math.max(1, errors),
+        skipped,
+        errorMessage:
+          error instanceof Error ? error.message.slice(0, 2000) : String(error),
+      })
+      .where(eq(targetSourceRefreshRuns.runId, runId));
+    throw error;
+  } finally {
+    await releaseSourceRefreshLease(db, runId);
+  }
+}
+
+export async function getSourceRefreshStatus() {
+  const db = await getDb();
+  if (!db) return { latestRun: null, lastSuccessfulRefreshAt: null };
+  const [latestRun] = await db
+    .select()
+    .from(targetSourceRefreshRuns)
+    .orderBy(desc(targetSourceRefreshRuns.startedAt))
+    .limit(1);
+  return {
+    latestRun: latestRun || null,
+    lastSuccessfulRefreshAt: await getLastSuccessfulRefreshAt(db),
+  };
+}
+
+export async function getSourceRefreshRuns(limit = 20) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(targetSourceRefreshRuns)
+    .orderBy(desc(targetSourceRefreshRuns.startedAt))
+    .limit(Math.min(Math.max(limit, 1), 100));
+}
+
+export async function getReadinessScore(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const standard = await getTargetStandard(userId);
+  if (!standard) return null;
+  const attempts = await db
+    .select()
+    .from(practiceAttempts)
+    .where(eq(practiceAttempts.userId, userId))
+    .limit(10000);
+  let criteria: Array<{
+    id: string;
+    label: string;
+    weight: number;
+    targetScore: number;
+  }> = [];
+  try {
+    criteria = JSON.parse(standard.rubricCriteria || "[]") as typeof criteria;
+  } catch {
+    criteria = [];
+  }
+  const overall = attempts.length
+    ? attempts.reduce((sum, attempt) => sum + attempt.overallScore, 0) /
+      attempts.length
+    : 0;
+  const metricFor = (criterion: { id: string }) => {
+    const values = attempts.map(attempt => {
+      if (criterion.id === "communication")
+        return attempt.communicationScore ?? attempt.overallScore;
+      if (criterion.id === "judgment")
+        return attempt.confidenceScore ?? attempt.overallScore;
+      if (criterion.id === "evidence")
+        return attempt.technicalScore ?? attempt.overallScore;
+      return attempt.overallScore;
+    });
+    return values.length
+      ? values.reduce((sum, score) => sum + score, 0) / values.length
+      : 0;
+  };
+  const breakdown = criteria.map(criterion => {
+    const score = metricFor(criterion);
+    const target = criterion.targetScore || 8;
+    const readiness = Math.min(100, Math.round((score / target) * 100));
+    return {
+      ...criterion,
+      score: Math.round(score * 10) / 10,
+      readiness,
+      evidenceCount: attempts.length,
+      status: score >= target ? "ready" : score >= target - 2 ? "close" : "gap",
+    };
+  });
+  const totalWeight = criteria.reduce(
+    (sum, criterion) => sum + Math.max(0, criterion.weight || 0),
+    0
+  );
+  const weighted = totalWeight
+    ? criteria.reduce(
+        (sum, criterion, index) =>
+          sum +
+          ((breakdown[index]?.readiness || 0) *
+            Math.max(0, criterion.weight || 0)) /
+            totalWeight,
+        0
+      )
+    : 0;
+  let rubricModules: Array<Record<string, unknown>> = [];
+  try {
+    rubricModules = JSON.parse(standard.rubricModules || "[]") as Array<
+      Record<string, unknown>
+    >;
+  } catch {
+    rubricModules = criteria.map(moduleForCriterion);
+  }
+  const forecast = standard.targetDate
+    ? (() => {
+        const daysRemaining = Math.max(
+          0,
+          Math.ceil((standard.targetDate!.getTime() - Date.now()) / 86400000)
+        );
+        const gap = Math.max(0, 80 - Math.round(weighted));
+        const attemptsPerWeek = attempts.length
+          ? Math.max(1, Math.round((attempts.length / 4) * 10) / 10)
+          : 0;
+        const estimatedWeeks = gap === 0 ? 0 : Math.ceil(gap / 5);
+        return {
+          targetDate: standard.targetDate,
+          daysRemaining,
+          estimatedWeeks,
+          attemptsPerWeek,
+          status:
+            gap === 0
+              ? "on-track"
+              : daysRemaining >= estimatedWeeks * 7
+                ? "plausible"
+                : "at-risk",
+        };
+      })()
+    : null;
+  const confidence =
+    attempts.length >= 10 ? "high" : attempts.length >= 3 ? "medium" : "low";
+  const latest = (
+    await db
+      .select()
+      .from(readinessScoreHistory)
+      .where(
+        and(
+          eq(readinessScoreHistory.userId, userId),
+          eq(readinessScoreHistory.targetStandardId, standard.id)
+        )
+      )
+      .orderBy(desc(readinessScoreHistory.createdAt))
+      .limit(1)
+  )[0];
+  if (
+    !latest ||
+    latest.score !== Math.round(weighted) ||
+    latest.attempts !== attempts.length
+  ) {
+    await db.insert(readinessScoreHistory).values({
+      userId,
+      targetStandardId: standard.id,
+      version: standard.version,
+      score: Math.round(weighted),
+      overallPracticeScore: Math.round(overall * 10) / 10,
+      attempts: attempts.length,
+      confidence,
+      breakdown: JSON.stringify(breakdown),
+      forecast: forecast ? JSON.stringify(forecast) : null,
+    });
+  }
+  return {
+    targetStandardId: standard.id,
+    version: standard.version,
+    score: Math.round(weighted),
+    overallPracticeScore: Math.round(overall * 10) / 10,
+    attempts: attempts.length,
+    confidence,
+    breakdown,
+    modules: rubricModules,
+    forecast,
+  };
+}
+
+export async function getReadinessScoreHistory(userId: number, limit = 24) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(readinessScoreHistory)
+    .where(eq(readinessScoreHistory.userId, userId))
+    .orderBy(desc(readinessScoreHistory.createdAt))
+    .limit(Math.min(100, Math.max(1, limit)));
+}
+
+export type ActualReadinessOutcome = "passed" | "not-passed";
+
+export const DEFAULT_CALIBRATION_MINIMUM_SAMPLE_SIZE = 30;
+
+function getCalibrationMinimumSampleSize() {
+  const configured = Number.parseInt(
+    process.env.READINESS_MIN_CALIBRATION_SAMPLE_SIZE || "",
+    10
+  );
+  return Number.isFinite(configured) && configured > 0
+    ? Math.min(configured, 1000)
+    : DEFAULT_CALIBRATION_MINIMUM_SAMPLE_SIZE;
+}
+
+export function forecastMatchesOutcome(
+  predictedStatus: string,
+  actualOutcome: ActualReadinessOutcome
+) {
+  if (predictedStatus === "unknown") return false;
+  return actualOutcome === "passed"
+    ? predictedStatus !== "at-risk"
+    : predictedStatus === "at-risk";
+}
+
+export async function recordReadinessOutcome(
+  userId: number,
+  historyId: number,
+  actualOutcome: ActualReadinessOutcome,
+  actualScore?: number,
+  notes?: string
+) {
+  const db = await getDb();
+  if (!db) return null;
+  const history = (
+    await db
+      .select()
+      .from(readinessScoreHistory)
+      .where(
+        and(
+          eq(readinessScoreHistory.id, historyId),
+          eq(readinessScoreHistory.userId, userId)
+        )
+      )
+      .limit(1)
+  )[0];
+  if (!history) return null;
+  const existing = (
+    await db
+      .select()
+      .from(readinessForecastOutcomes)
+      .where(
+        and(
+          eq(readinessForecastOutcomes.userId, userId),
+          eq(readinessForecastOutcomes.historyId, historyId)
+        )
+      )
+      .limit(1)
+  )[0];
+  const values = {
+    userId,
+    targetStandardId: history.targetStandardId,
+    historyId,
+    actualOutcome,
+    actualScore: actualScore ?? null,
+    notes: notes || null,
+    observedAt: new Date(),
+  };
+  if (existing) {
+    await db
+      .update(readinessForecastOutcomes)
+      .set(values)
+      .where(eq(readinessForecastOutcomes.id, existing.id));
+  } else {
+    await db.insert(readinessForecastOutcomes).values(values);
+  }
+  return getForecastAccuracy(userId);
+}
+
+export async function getForecastAccuracy(userId: number) {
+  const db = await getDb();
+  const minimumSampleSize = getCalibrationMinimumSampleSize();
+  if (!db) {
+    return {
+      totalForecasts: 0,
+      resolvedForecasts: 0,
+      correctForecasts: 0,
+      accuracyPercent: null,
+      outcomes: [],
+      calibration: [],
+      minimumSampleSize,
+    };
+  }
+  const [histories, outcomes, standards] = await Promise.all([
+    db
+      .select()
+      .from(readinessScoreHistory)
+      .where(eq(readinessScoreHistory.userId, userId))
+      .orderBy(desc(readinessScoreHistory.createdAt))
+      .limit(100),
+    db
+      .select()
+      .from(readinessForecastOutcomes)
+      .where(eq(readinessForecastOutcomes.userId, userId))
+      .orderBy(desc(readinessForecastOutcomes.observedAt))
+      .limit(100),
+    db
+      .select()
+      .from(targetStandards)
+      .where(eq(targetStandards.userId, userId))
+      .limit(10),
+  ]);
+  const historyById = new Map(histories.map(history => [history.id, history]));
+  const standardById = new Map(
+    standards.map(standard => [standard.id, standard])
+  );
+  const evaluated = outcomes.flatMap(outcome => {
+    const history = historyById.get(outcome.historyId);
+    if (!history) return [];
+    let predictedStatus = "unknown";
+    try {
+      predictedStatus =
+        (JSON.parse(history.forecast || "{}").status as string | undefined) ||
+        "unknown";
+    } catch {
+      predictedStatus = "unknown";
+    }
+    const correct = forecastMatchesOutcome(
+      predictedStatus,
+      outcome.actualOutcome as ActualReadinessOutcome
+    );
+    const standard = standardById.get(history.targetStandardId);
+    return [
+      {
+        ...outcome,
+        predictedStatus,
+        correct,
+        score: history.score,
+        outcomeType: standard?.outcomeType || "unknown",
+        jurisdiction: standard?.jurisdiction || "Global / unspecified",
+      },
+    ];
+  });
+  const correctForecasts = evaluated.filter(item => item.correct).length;
+  const calibrationMap = new Map<
+    string,
+    {
+      outcomeType: string;
+      jurisdiction: string;
+      total: number;
+      correct: number;
+    }
+  >();
+  for (const item of evaluated) {
+    const key = `${item.outcomeType}::${item.jurisdiction}`;
+    const bucket = calibrationMap.get(key) || {
+      outcomeType: item.outcomeType,
+      jurisdiction: item.jurisdiction,
+      total: 0,
+      correct: 0,
+    };
+    bucket.total += 1;
+    if (item.correct) bucket.correct += 1;
+    calibrationMap.set(key, bucket);
+  }
+  return {
+    totalForecasts: histories.length,
+    resolvedForecasts: evaluated.length,
+    correctForecasts,
+    accuracyPercent: evaluated.length
+      ? Math.round((correctForecasts / evaluated.length) * 100)
+      : null,
+    outcomes: evaluated.slice(0, 12),
+    calibration: Array.from(calibrationMap.values())
+      .map(bucket => ({
+        ...bucket,
+        accuracyPercent: Math.round((bucket.correct / bucket.total) * 100),
+        minimumSampleSize,
+        lowSample: bucket.total < minimumSampleSize,
+      }))
+      .sort((a, b) => b.total - a.total),
+  };
+}
+
+export type SavedDateRange = {
+  name: string;
+  startDate: string;
+  endDate: string;
+};
+
+export async function getSavedDateRanges(
+  userId: number
+): Promise<SavedDateRange[]> {
+  const profile = await getCoachProfile(userId);
+  if (!profile?.savedDateRanges) return [];
+  try {
+    return JSON.parse(profile.savedDateRanges) as SavedDateRange[];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveDateRange(userId: number, input: SavedDateRange) {
+  const ranges = (await getSavedDateRanges(userId)).filter(
+    range => range.name.toLowerCase() !== input.name.toLowerCase()
+  );
+  const next = [input, ...ranges].slice(0, 20);
+  await upsertCoachProfile(userId, { savedDateRanges: JSON.stringify(next) });
+  return next;
+}
+
+export async function updateDateRange(
+  userId: number,
+  originalName: string,
+  input: SavedDateRange
+) {
+  const ranges = (await getSavedDateRanges(userId)).filter(
+    range =>
+      range.name.toLowerCase() !== originalName.toLowerCase() &&
+      range.name.toLowerCase() !== input.name.toLowerCase()
+  );
+  const next = [input, ...ranges].slice(0, 20);
+  await upsertCoachProfile(userId, { savedDateRanges: JSON.stringify(next) });
+  return next;
+}
+
+export async function deleteDateRange(userId: number, name: string) {
+  const next = (await getSavedDateRanges(userId)).filter(
+    range => range.name.toLowerCase() !== name.toLowerCase()
+  );
+  await upsertCoachProfile(userId, { savedDateRanges: JSON.stringify(next) });
+  return next;
+}
+
+export async function createCoachingSession(
+  userId: number,
+  data: {
+    interviewType: string;
+    timeline: string;
+    focus: string;
+    difficulty: string;
+    mode: string;
+    plannedSessions: number;
+  }
+) {
+  const db = await getDb();
+  if (!db) return undefined;
+  await db.insert(coachingSessions).values({ userId, ...data });
+  const result = await db
+    .select()
+    .from(coachingSessions)
+    .where(
+      and(
+        eq(coachingSessions.userId, userId),
+        eq(coachingSessions.interviewType, data.interviewType)
+      )
+    )
+    .orderBy(desc(coachingSessions.id))
+    .limit(1);
+  return result[0];
+}
+
+export async function getUserProgress(userId: number) {
+  const db = await getDb();
+  if (!db)
+    return {
+      profile: undefined,
+      sessions: [],
+      attempts: [],
+      totals: { sessions: 0, attempts: 0, averageScore: 0 },
+    };
+  const [profile, sessions, attempts] = await Promise.all([
+    getCoachProfile(userId),
+    db
+      .select()
+      .from(coachingSessions)
+      .where(eq(coachingSessions.userId, userId))
+      .orderBy(desc(coachingSessions.createdAt))
+      .limit(20),
+    db
+      .select()
+      .from(practiceAttempts)
+      .where(eq(practiceAttempts.userId, userId))
+      .orderBy(desc(practiceAttempts.createdAt))
+      .limit(20),
+  ]);
+  const averageScore = attempts.length
+    ? Math.round(
+        attempts.reduce((sum, item) => sum + item.overallScore, 0) /
+          attempts.length
+      )
+    : 0;
+  return {
+    profile,
+    sessions,
+    attempts,
+    totals: {
+      sessions: sessions.length,
+      attempts: attempts.length,
+      averageScore,
+    },
+  };
+}
+
+export async function getLatestWeeklySummary(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db
+    .select()
+    .from(weeklySummaries)
+    .where(eq(weeklySummaries.userId, userId))
+    .orderBy(desc(weeklySummaries.weekStart))
+    .limit(1);
+  return result[0] ?? null;
+}
+
+export async function getWeeklyComparison(
+  userId: number,
+  filters?: {
+    role?: string;
+    country?: string;
+    experienceLevel?: string;
+    startDate?: string;
+    endDate?: string;
+  }
+) {
+  const db = await getDb();
+  if (!db)
+    return {
+      current: null,
+      previousWeeks: [],
+      trendSeries: [],
+      peerAverageScore: 0,
+      peerAverageMinutes: 0,
+      peerCount: 0,
+      peerAverageBySkill: [],
+    };
+  const [summaries, profiles] = await Promise.all([
+    db
+      .select()
+      .from(weeklySummaries)
+      .orderBy(desc(weeklySummaries.weekStart))
+      .limit(10000),
+    db.select().from(coachProfiles).limit(10000),
+  ]);
+  const startDate = filters?.startDate
+    ? new Date(`${filters.startDate}T00:00:00.000Z`)
+    : null;
+  const endDate = filters?.endDate
+    ? new Date(`${filters.endDate}T23:59:59.999Z`)
+    : null;
+  const inRange = (summary: typeof weeklySummaries.$inferSelect) =>
+    (!startDate || summary.weekStart >= startDate) &&
+    (!endDate || summary.weekStart <= endDate);
+  const mine = summaries.filter(
+    summary => summary.userId === userId && inRange(summary)
+  );
+  const profileByUser = new Map(
+    profiles.map(profile => [profile.userId, profile])
+  );
+  const peers = summaries.filter(summary => {
+    if (summary.userId === userId || !inRange(summary)) return false;
+    const profile = profileByUser.get(summary.userId);
+    return (
+      (!filters?.role ||
+        profile?.targetRole?.toLowerCase() === filters.role.toLowerCase()) &&
+      (!filters?.country ||
+        profile?.country?.toLowerCase() === filters.country.toLowerCase()) &&
+      (!filters?.experienceLevel ||
+        profile?.experienceLevel?.toLowerCase() ===
+          filters.experienceLevel.toLowerCase())
+    );
+  });
+  const peerSkills = new Map<string, { total: number; count: number }>();
+  for (const summary of peers) {
+    if (!summary.skillTrends) continue;
+    try {
+      const trends = JSON.parse(summary.skillTrends) as Array<{
+        skill?: string;
+        score?: number;
+        attempts?: number;
+      }>;
+      for (const trend of trends) {
+        if (!trend.skill || typeof trend.score !== "number") continue;
+        const bucket = peerSkills.get(trend.skill) || { total: 0, count: 0 };
+        const weight = Math.max(1, trend.attempts || 1);
+        bucket.total += trend.score * weight;
+        bucket.count += weight;
+        peerSkills.set(trend.skill, bucket);
+      }
+    } catch {
+      /* Ignore malformed legacy summary metrics. */
+    }
+  }
+  return {
+    current: mine[0] ?? null,
+    previousWeeks: mine.slice(1, 8),
+    trendSeries: mine.slice(0, 8).map(summary => ({
+      weekStart: summary.weekStart,
+      skillTrends: summary.skillTrends,
+    })),
+    peerAverageScore: peers.length
+      ? Math.round(
+          (peers.reduce((sum, summary) => sum + summary.averageScore, 0) /
+            peers.length) *
+            10
+        ) / 10
+      : 0,
+    peerAverageMinutes: peers.length
+      ? Math.round(
+          peers.reduce((sum, summary) => sum + summary.minutesPracticed, 0) /
+            peers.length
+        )
+      : 0,
+    peerCount: peers.length,
+    peerAverageBySkill: Array.from(peerSkills, ([skill, bucket]) => ({
+      skill,
+      score: Math.round((bucket.total / bucket.count) * 10) / 10,
+      attempts: bucket.count,
+    })),
+  };
+}
+
+export async function createWeeklySummaryForUser(userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const weekStart = currentWeekStart();
+  const [attempts, sessions] = await Promise.all([
+    db
+      .select()
+      .from(practiceAttempts)
+      .where(eq(practiceAttempts.userId, userId))
+      .limit(10000),
+    db
+      .select()
+      .from(coachingSessions)
+      .where(eq(coachingSessions.userId, userId))
+      .limit(10000),
+  ]);
+  const thisWeek = attempts.filter(attempt => attempt.createdAt >= weekStart);
+  const minutes = thisWeek.reduce((sum, attempt) => sum + attempt.timeTaken, 0);
+  const average = thisWeek.length
+    ? Math.round(
+        thisWeek.reduce((sum, attempt) => sum + attempt.overallScore, 0) /
+          thisWeek.length
+      )
+    : 0;
+  const metrics = buildSummaryMetrics(thisWeek, attempts, sessions, weekStart);
+  const summaryText = thisWeek.length
+    ? `You completed ${thisWeek.length} practice ${thisWeek.length === 1 ? "attempt" : "attempts"} this week, practiced for ${minutes} minutes, and averaged ${average}/10. Keep the streak by choosing one focused drill next.`
+    : "No practice attempts were recorded this week. Start with one focused drill to keep your preparation moving.";
+  await db
+    .insert(weeklySummaries)
+    .values({
+      userId,
+      weekStart,
+      attempts: thisWeek.length,
+      averageScore: average,
+      minutesPracticed: minutes,
+      summaryText,
+      ...metrics,
+    })
+    .onDuplicateKeyUpdate({
+      set: {
+        attempts: thisWeek.length,
+        averageScore: average,
+        minutesPracticed: minutes,
+        summaryText,
+        ...metrics,
+        createdAt: new Date(),
+      },
+    });
+  return getLatestWeeklySummary(userId);
+}
+
+function currentWeekStart() {
+  const result = new Date();
+  result.setUTCHours(0, 0, 0, 0);
+  result.setUTCDate(result.getUTCDate() - result.getUTCDay());
+  return result;
+}
+
+function buildSummaryMetrics(
+  thisWeek: Array<typeof practiceAttempts.$inferSelect>,
+  allAttempts: Array<typeof practiceAttempts.$inferSelect>,
+  sessions: Array<typeof coachingSessions.$inferSelect>,
+  weekStart: Date
+) {
+  const sessionNames = new Map(
+    sessions.map(session => [session.id, session.interviewType])
+  );
+  const buckets = new Map<string, { total: number; count: number }>();
+  for (const attempt of thisWeek) {
+    const skill = sessionNames.get(attempt.sessionId) || "general";
+    const bucket = buckets.get(skill) || { total: 0, count: 0 };
+    bucket.total += attempt.overallScore;
+    bucket.count += 1;
+    buckets.set(skill, bucket);
+  }
+  const skillTrends = Array.from(buckets, ([skill, bucket]) => ({
+    skill,
+    score: Math.round(bucket.total / bucket.count),
+    attempts: bucket.count,
+  })).sort((a, b) => a.score - b.score);
+  const moduleCatalog: Record<
+    string,
+    { title: string; reason: string; action: string }
+  > = {
+    "tech-interview": {
+      title: "Algorithm fluency sprint",
+      reason: "Build speed and correctness under pressure.",
+      action: "Complete two timed problems and explain complexity aloud.",
+    },
+    behavioral: {
+      title: "Evidence-backed story lab",
+      reason: "Make impact and outcomes more concrete.",
+      action:
+        "Rewrite one story with Situation, Action, and measurable Result.",
+    },
+    "system-design": {
+      title: "Architecture trade-off studio",
+      reason: "Strengthen scale, reliability, and decision clarity.",
+      action: "Sketch one design and name three explicit trade-offs.",
+    },
+    general: {
+      title: "Structured answer fundamentals",
+      reason: "Improve clarity when no single skill dominates.",
+      action: "Use a three-part answer structure and close with a next step.",
+    },
+  };
+  const recommendedModules = (
+    skillTrends.length
+      ? skillTrends.slice(0, 3)
+      : [{ skill: "general", score: 0, attempts: 0 }]
+  ).map(item => ({
+    skill: item.skill,
+    score: item.score,
+    ...(moduleCatalog[item.skill] || moduleCatalog.general),
+  }));
+  const previousWeekStart = new Date(weekStart.getTime() - 604800000);
+  const practicedPreviousWeek = allAttempts.some(
+    attempt =>
+      attempt.createdAt >= previousWeekStart && attempt.createdAt < weekStart
+  );
+  return {
+    skillTrends: JSON.stringify(skillTrends),
+    recommendedModules: JSON.stringify(recommendedModules),
+    retentionRate: practicedPreviousWeek ? (thisWeek.length ? 100 : 0) : null,
+  };
+}
+
+export async function createWeeklySummaries() {
+  const db = await getDb();
+  if (!db) return { created: 0, weekStart: currentWeekStart() };
+  const weekStart = currentWeekStart();
+  const [allUsers, attempts, sessions] = await Promise.all([
+    db.select().from(users).limit(10000),
+    db.select().from(practiceAttempts).limit(10000),
+    db.select().from(coachingSessions).limit(10000),
+  ]);
+  const thisWeek = attempts.filter(attempt => attempt.createdAt >= weekStart);
+  let created = 0;
+  for (const user of allUsers) {
+    const userAttempts = thisWeek.filter(attempt => attempt.userId === user.id);
+    const minutes = userAttempts.reduce(
+      (sum, attempt) => sum + attempt.timeTaken,
+      0
+    );
+    const average = userAttempts.length
+      ? Math.round(
+          userAttempts.reduce((sum, attempt) => sum + attempt.overallScore, 0) /
+            userAttempts.length
+        )
+      : 0;
+    const metrics = buildSummaryMetrics(
+      userAttempts,
+      attempts.filter(attempt => attempt.userId === user.id),
+      sessions.filter(session => session.userId === user.id),
+      weekStart
+    );
+    const summaryText = userAttempts.length
+      ? `You completed ${userAttempts.length} practice ${userAttempts.length === 1 ? "attempt" : "attempts"} this week, practiced for ${minutes} minutes, and averaged ${average}/10. Keep the streak by choosing one focused drill next.`
+      : "No practice attempts were recorded this week. Start with one focused drill to keep your preparation moving.";
+    await db
+      .insert(weeklySummaries)
+      .values({
+        userId: user.id,
+        weekStart,
+        attempts: userAttempts.length,
+        averageScore: average,
+        minutesPracticed: minutes,
+        summaryText,
+        ...metrics,
+      })
+      .onDuplicateKeyUpdate({
+        set: {
+          attempts: userAttempts.length,
+          averageScore: average,
+          minutesPracticed: minutes,
+          summaryText,
+          ...metrics,
+          createdAt: new Date(),
+        },
+      });
+    created += 1;
+  }
+  return { created, weekStart };
+}
+
+export async function recordPracticeAttempt(
+  userId: number,
+  sessionId: number,
+  data: {
+    question: string;
+    answer: string;
+    overallScore: number;
+    technicalScore?: number;
+    communicationScore?: number;
+    confidenceScore?: number;
+    timeManagementScore?: number;
+    coachType: string;
+    timeTaken: number;
+  }
+) {
+  const db = await getDb();
+  if (!db) return undefined;
+  await db.insert(practiceAttempts).values({ userId, sessionId, ...data });
+  const current = await db
+    .select()
+    .from(coachingSessions)
+    .where(
+      and(
+        eq(coachingSessions.id, sessionId),
+        eq(coachingSessions.userId, userId)
+      )
+    )
+    .limit(1);
+  if (current[0]) {
+    const nextCount = current[0].completedSessions + 1;
+    const nextScore =
+      current[0].completedSessions === 0
+        ? data.overallScore
+        : Math.round(current[0].overallScore * 0.7 + data.overallScore * 0.3);
+    await db
+      .update(coachingSessions)
+      .set({
+        completedSessions: nextCount,
+        overallScore: nextScore,
+        updatedAt: new Date(),
+      })
+      .where(eq(coachingSessions.id, sessionId));
+  }
+  return data;
+}
+
+export async function recordInteraction(
+  userId: number | undefined,
+  sessionId: number | undefined,
+  data: { eventType: string; path: string; metadata?: Record<string, unknown> }
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(interactionEvents).values({
+    userId,
+    sessionId,
+    eventType: data.eventType,
+    path: data.path,
+    metadata: data.metadata ? JSON.stringify(data.metadata) : null,
+  });
+}
+
+function weekStart(date: Date) {
+  const result = new Date(date);
+  result.setHours(0, 0, 0, 0);
+  const day = result.getDay();
+  result.setDate(result.getDate() - day);
+  return result;
+}
+
+function weekKey(date: Date) {
+  return weekStart(date).toISOString().slice(0, 10);
+}
+function weekDelta(start: Date, end: Date) {
+  return Math.max(
+    0,
+    Math.floor(
+      (weekStart(end).getTime() - weekStart(start).getTime()) / 604800000
+    )
+  );
+}
+
+type ScoreBucket = {
+  count: number;
+  total: number;
+  technical: number;
+  communication: number;
+  confidence: number;
+  time: number;
+};
+function addScore(
+  bucket: ScoreBucket | undefined,
+  attempt: typeof practiceAttempts.$inferSelect
+) {
+  const next = bucket || {
+    count: 0,
+    total: 0,
+    technical: 0,
+    communication: 0,
+    confidence: 0,
+    time: 0,
+  };
+  next.count += 1;
+  next.total += attempt.overallScore;
+  next.technical += attempt.technicalScore || 0;
+  next.communication += attempt.communicationScore || 0;
+  next.confidence += attempt.confidenceScore || 0;
+  next.time += attempt.timeManagementScore || 0;
+  return next;
+}
+function avg(value: number, count: number) {
+  return count ? Math.round((value / count) * 10) / 10 : 0;
+}
+
+export async function getAnalyticsSummary() {
+  const db = await getDb();
+  if (!db)
+    return {
+      totalEvents: 0,
+      uniqueUsers: 0,
+      byPath: [],
+      byEvent: [],
+      completionRate: 0,
+      retentionCohorts: [],
+      skillTrends: [],
+      coachQuality: [],
+    };
+  const [events, allUsers, attempts, sessions] = await Promise.all([
+    db
+      .select()
+      .from(interactionEvents)
+      .orderBy(desc(interactionEvents.createdAt))
+      .limit(10000),
+    db.select().from(users).limit(10000),
+    db
+      .select()
+      .from(practiceAttempts)
+      .orderBy(desc(practiceAttempts.createdAt))
+      .limit(10000),
+    db.select().from(coachingSessions).limit(10000),
+  ]);
+  const usersSeen = new Set<number>();
+  const paths = new Map<string, number>();
+  const eventTypes = new Map<string, number>();
+  for (const event of events) {
+    if (event.userId) usersSeen.add(event.userId);
+    paths.set(event.path, (paths.get(event.path) || 0) + 1);
+    eventTypes.set(event.eventType, (eventTypes.get(event.eventType) || 0) + 1);
+  }
+  const starts = eventTypes.get("session_started") || 0;
+  const completions = eventTypes.get("practice_completed") || 0;
+
+  const activeWeeks = new Map<number, Set<number>>();
+  for (const event of events) {
+    if (!event.userId) continue;
+    const user = allUsers.find(item => item.id === event.userId);
+    if (!user) continue;
+    const cohort = weekStart(user.createdAt);
+    const weeks = activeWeeks.get(event.userId) || new Set<number>();
+    weeks.add(weekDelta(cohort, event.createdAt));
+    activeWeeks.set(event.userId, weeks);
+  }
+  const cohortBuckets = new Map<
+    string,
+    { users: Set<number>; retained: Map<number, Set<number>> }
+  >();
+  for (const user of allUsers) {
+    const cohort = weekKey(user.createdAt);
+    const bucket = cohortBuckets.get(cohort) || {
+      users: new Set<number>(),
+      retained: new Map<number, Set<number>>(),
+    };
+    bucket.users.add(user.id);
+    const weeks = activeWeeks.get(user.id) || new Set<number>();
+    for (const week of Array.from(weeks)) {
+      const set = bucket.retained.get(week) || new Set<number>();
+      set.add(user.id);
+      bucket.retained.set(week, set);
+    }
+    cohortBuckets.set(cohort, bucket);
+  }
+  const retentionCohorts = Array.from(cohortBuckets.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(-12)
+    .map(([cohort, bucket]) => ({
+      cohort,
+      users: bucket.users.size,
+      weeks: [0, 1, 2, 3, 4].map(week => ({
+        week,
+        retained: bucket.retained.get(week)?.size || 0,
+        rate: avg(
+          (bucket.retained.get(week)?.size || 0) * 100,
+          bucket.users.size
+        ),
+      })),
+    }));
+
+  const sessionById = new Map(sessions.map(session => [session.id, session]));
+  const skillBuckets = new Map<string, Map<string, ScoreBucket>>();
+  const qualityBuckets = new Map<string, ScoreBucket>();
+  for (const attempt of attempts) {
+    const session = sessionById.get(attempt.sessionId);
+    const skill = session?.interviewType || "unknown";
+    const key = weekKey(attempt.createdAt);
+    const skillMap = skillBuckets.get(skill) || new Map<string, ScoreBucket>();
+    skillMap.set(key, addScore(skillMap.get(key), attempt));
+    skillBuckets.set(skill, skillMap);
+    qualityBuckets.set(
+      attempt.coachType,
+      addScore(qualityBuckets.get(attempt.coachType), attempt)
+    );
+  }
+  const skillTrends = Array.from(skillBuckets.entries()).flatMap(
+    ([skill, weeks]) =>
+      Array.from(weeks.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([week, bucket]) => ({
+          skill,
+          week,
+          attempts: bucket.count,
+          overall: avg(bucket.total, bucket.count),
+          communication: avg(bucket.communication, bucket.count),
+          confidence: avg(bucket.confidence, bucket.count),
+          technical: avg(bucket.technical, bucket.count),
+          timeManagement: avg(bucket.time, bucket.count),
+        }))
+  );
+  const coachQuality = Array.from(qualityBuckets.entries())
+    .map(([coachType, bucket]) => ({
+      coachType,
+      attempts: bucket.count,
+      overall: avg(bucket.total, bucket.count),
+      communication: avg(bucket.communication, bucket.count),
+      confidence: avg(bucket.confidence, bucket.count),
+      technical: avg(bucket.technical, bucket.count),
+      timeManagement: avg(bucket.time, bucket.count),
+    }))
+    .sort((a, b) => b.overall - a.overall);
+
+  return {
+    totalEvents: events.length,
+    uniqueUsers: usersSeen.size,
+    byPath: Array.from(paths, ([path, count]) => ({ path, count })).sort(
+      (a, b) => b.count - a.count
+    ),
+    byEvent: Array.from(eventTypes, ([eventType, count]) => ({
+      eventType,
+      count,
+    })).sort((a, b) => b.count - a.count),
+    completionRate: starts ? Math.round((completions / starts) * 100) : 0,
+    retentionCohorts,
+    skillTrends,
+    coachQuality,
+  };
+}
