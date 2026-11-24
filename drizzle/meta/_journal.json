@@ -1,0 +1,104 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1789647604520,
+      "tag": "0000_needy_synch",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1789856851977,
+      "tag": "0001_fearless_black_bolt",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1789974825340,
+      "tag": "0002_great_hulk",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1790114153428,
+      "tag": "0003_aspiring_exiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1790114537974,
+      "tag": "0004_small_mister_fear",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1790115702717,
+      "tag": "0005_clever_the_initiative",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1790257809864,
+      "tag": "0006_overrated_the_santerians",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1790257972079,
+      "tag": "0007_condemned_wilson_fisk",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1791226908092,
+      "tag": "0008_cool_mongoose",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1791365112050,
+      "tag": "0009_productive_thor_girl",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1791365208084,
+      "tag": "0010_thin_karnak",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1793588358726,
+      "tag": "0011_flaky_power_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1793588585777,
+      "tag": "0012_petite_vertigo",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "5",
+      "when": 1794604277377,
+      "tag": "0013_stale_hiroim",
+      "breakpoints": true
+    }
+  ]
+}

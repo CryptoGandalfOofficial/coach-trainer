@@ -1,0 +1,151 @@
+name: E2E and accessibility
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "30 2 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  accessibility:
+    name: Axe accessibility audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Start application
+        run: |
+          pnpm dev > "$RUNNER_TEMP/global-ai-coach.log" 2>&1 &
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:3000/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/global-ai-coach.log"
+          exit 1
+
+      - name: Run axe-core audit
+        run: pnpm test:e2e:a11y
+
+      - name: Run credential-free mock protected suite
+        run: pnpm test:e2e:mock
+
+      - name: Upload mock baseline images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-chart-mock-baselines
+          path: e2e/mobile-chart.mock.spec.ts-snapshots/
+          if-no-files-found: error
+
+      - name: Upload mock Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-mock-e2e-artifacts
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+
+  protected-e2e:
+    name: Protected mobile E2E
+    env:
+      E2E_STORAGE_STATE_B64: ${{ secrets.E2E_STORAGE_STATE_B64 }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify authenticated secret is configured
+        shell: bash
+        run: |
+          if [[ -z "$E2E_STORAGE_STATE_B64" ]]; then
+            echo "E2E_STORAGE_STATE_B64 is not configured; refusing to run an unauthenticated protected gate."
+            exit 1
+          fi
+          echo "Authenticated storage-state secret is present."
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Decode authenticated storage state
+        run: printf '%s' "$E2E_STORAGE_STATE_B64" | base64 --decode > "$RUNNER_TEMP/e2e-storage-state.json"
+
+      - name: Validate authenticated storage state
+        env:
+          STORAGE_STATE_PATH: ${{ runner.temp }}/e2e-storage-state.json
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = process.env.STORAGE_STATE_PATH;
+          const state = JSON.parse(fs.readFileSync(path, 'utf8'));
+          if (!state || !Array.isArray(state.cookies) || !Array.isArray(state.origins)) {
+            throw new Error('Storage state must contain cookies and origins arrays');
+          }
+          if (state.cookies.length === 0 && state.origins.length === 0) {
+            throw new Error('Storage state contains no cookies or origins');
+          }
+          console.log(`Validated storage state structure (${state.cookies.length} cookies, ${state.origins.length} origins)`);
+          NODE
+
+      - name: Start application
+        run: |
+          pnpm dev > "$RUNNER_TEMP/global-ai-coach.log" 2>&1 &
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:3000/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/global-ai-coach.log"
+          exit 1
+
+      - name: Run protected mobile E2E and axe tests
+        env:
+          E2E_BASE_URL: http://127.0.0.1:3000
+          E2E_STORAGE_STATE: ${{ runner.temp }}/e2e-storage-state.json
+        run: pnpm exec playwright test e2e/mobile-chart.spec.ts e2e/accessibility.spec.ts
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-protected-e2e-artifacts
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+
+      - name: Remove authenticated storage state
+        if: always()
+        run: rm -f "$RUNNER_TEMP/e2e-storage-state.json"

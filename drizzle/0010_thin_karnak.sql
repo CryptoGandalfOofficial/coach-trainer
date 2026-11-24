@@ -1,0 +1,1 @@
+ALTER TABLE `target_standards` MODIFY COLUMN `rubricCriteria` text NOT NULL;
