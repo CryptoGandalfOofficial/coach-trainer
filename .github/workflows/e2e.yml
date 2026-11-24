@@ -63,9 +63,17 @@ jobs:
     name: Protected mobile E2E
     env:
       E2E_STORAGE_STATE_B64: ${{ secrets.E2E_STORAGE_STATE_B64 }}
-    if: ${{ env.E2E_STORAGE_STATE_B64 != '' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Verify authenticated secret is configured
+        shell: bash
+        run: |
+          if [[ -z "$E2E_STORAGE_STATE_B64" ]]; then
+            echo "E2E_STORAGE_STATE_B64 is not configured; refusing to run an unauthenticated protected gate."
+            exit 1
+          fi
+          echo "Authenticated storage-state secret is present."
+
       - name: Checkout
         uses: actions/checkout@v4
 
